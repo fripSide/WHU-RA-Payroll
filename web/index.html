@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学生劳务费发放助手</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ===================== 顶栏 ===================== -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">武</span>
+    <div>
+      <h1>学生劳务费发放助手</h1>
+      <p id="subtitle">导入名单 → 设置金额 → 导出文件</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <span class="save-state" id="saveState">就绪</span>
+    <button class="btn btn-ghost" id="btnDrawer" type="button">发放信息</button>
+    <button class="btn btn-ghost" id="btnHelp" type="button">使用说明</button>
+  </div>
+</header>
+
+<!-- ===================== 步骤条 ===================== -->
+<nav class="steps" id="steps">
+  <button class="step is-active" data-step="1" type="button">
+    <span class="step-no">1</span>
+    <span class="step-text"><strong>导入名单</strong><em id="step1Info">还没有学生</em></span>
+  </button>
+  <span class="step-arrow">→</span>
+  <button class="step" data-step="2" type="button">
+    <span class="step-no">2</span>
+    <span class="step-text"><strong>勾选并设置金额、工时</strong><em id="step2Info">—</em></span>
+  </button>
+  <span class="step-arrow">→</span>
+  <button class="step" data-step="3" type="button">
+    <span class="step-no">3</span>
+    <span class="step-text"><strong>导出文件</strong><em id="step3Info">Word 明细表 / Excel 名单</em></span>
+  </button>
+</nav>
+
+<main class="page">
+
+  <!-- =================================================================
+       第 1 步：导入名单
+       ================================================================= -->
+  <section class="panel" data-panel="1">
+    <div class="panel-head">
+      <h2>第 1 步 · 导入学生名单</h2>
+      <p>支持 <code>.xls</code> / <code>.xlsx</code> / <code>.csv</code>，也可以直接粘贴。已经有学生了就直接下一步。</p>
+    </div>
+
+    <!-- 兼职时段：导入前先定好，点一下就行 -->
+    <div class="period-bar">
+      <span class="bar-label">兼职时段</span>
+      <div class="period-chips" id="periodChips"></div>
+      <span class="period-custom">
+        <input type="text" id="periodCustom" placeholder="或自己填，如 2026年9月" list="periodList">
+        <datalist id="periodList"></datalist>
+      </span>
+      <button class="btn btn-mini" id="btnPeriodEdit" type="button">改预设…</button>
+      <span class="bar-gap"></span>
+      <span class="tip" id="periodHint"></span>
+    </div>
+
+    <div class="import-grid">
+      <button class="tile" id="tileFile" type="button">
+        <span class="tile-icon">📄</span>
+        <strong>选择文件</strong>
+        <em>学号 / 姓名 / 所在学院 等列自动识别，有哪列收哪列</em>
+      </button>
+      <button class="tile" id="tilePaste" type="button">
+        <span class="tile-icon">📋</span>
+        <strong>粘贴名单</strong>
+        <em>从 Excel 复制后直接贴进来</em>
+      </button>
+      <button class="tile" id="tileManual" type="button">
+        <span class="tile-icon">✏️</span>
+        <strong>手动添加</strong>
+        <em>只加一两个人时用</em>
+      </button>
+    </div>
+
+    <div class="drop" id="drop" hidden>
+      <strong>把文件拖到这里，或点击选择</strong>
+      <span>支持 .xls / .xlsx / .csv</span>
+      <input type="file" id="fileRoster" accept=".xls,.xlsx,.csv,.txt" hidden>
+    </div>
+
+    <div class="paste-box" id="pasteBox" hidden>
+      <textarea id="pasteArea" rows="8" spellcheck="false"
+        placeholder="学号,姓名,所在学院,助研津贴(三兼费)&#10;2024302111311,秦希,计算机学院,1000&#10;20243021183013,潘俊安,国家网络安全学院,1000"></textarea>
+      <div class="paste-actions">
+        <span class="tip">每行一个学生；逗号 / 制表符 / 空格分隔都行；<b>所在学院、标准、工时</b>有哪列就收哪列</span>
+        <button class="btn btn-primary" id="btnParseText" type="button">解析名单</button>
+      </div>
+    </div>
+
+    <div class="preview" id="preview" hidden>
+      <div class="preview-head">
+        <strong id="previewTitle">解析结果</strong>
+        <label class="inline-check">
+          <input type="checkbox" id="mergeToggle" checked>
+          同名 / 同学号只更新，其余追加
+        </label>
+      </div>
+      <div class="preview-list" id="previewList"></div>
+      <div class="preview-actions">
+        <button class="btn btn-ghost" id="btnCancelImport" type="button">取消</button>
+        <button class="btn btn-primary" id="btnConfirmImport" type="button">确认导入</button>
+      </div>
+    </div>
+
+    <!-- 已导入的学生：只做概览，不放操作，避免和下一步重复 -->
+    <div class="imported" id="importedBox" hidden>
+      <div class="imported-head">
+        <strong>当前名单</strong>
+        <span id="importedSummary"></span>
+        <button class="link" id="btnClearStudents" type="button">清空重来</button>
+      </div>
+      <div class="chips" id="importedChips"></div>
+    </div>
+  </section>
+
+  <!-- =================================================================
+       第 2 步：勾选 + 设金额
+       ================================================================= -->
+  <section class="panel" data-panel="2" hidden>
+    <div class="panel-head is-compact">
+      <h2>第 2 步 · 勾选学生，设置补贴费与工时</h2>
+      <p>打勾 = 这次要发的人；金额点下面按钮，或从 Excel 复制一列后 Ctrl+V</p>
+    </div>
+
+    <!-- 补贴费：只留一排，点一下就设好 -->
+    <div class="amount-bar">
+      <span class="bar-label">补贴费</span>
+      <div class="preset-bar" id="presetBar"></div>
+      <button class="btn btn-mini" id="btnAmountAuto" type="button"
+              title="改回 标准 × 工时 自动计算">按标准×工时</button>
+      <span class="bar-gap"></span>
+      <button class="btn btn-primary" id="btnBatchOpen" type="button">批量填入一列…</button>
+      <button class="btn btn-mini" id="btnPresetEdit" type="button">改预设…</button>
+    </div>
+
+    <!-- 批量填入一列（常驻面板，点按钮展开） -->
+    <section class="fillpanel" id="fillPanel" hidden>
+      <div class="fillpanel-head">
+        <strong>批量填入一列</strong>
+        <span class="tip">从 Excel 复制一列直接贴进来，按下面列出的顺序填给<b>已勾选</b>的学生</span>
+      </div>
+
+      <div class="fillpanel-tabs">
+        <button class="filltab is-active" data-fill-field="hours" type="button">工时</button>
+        <button class="filltab" data-fill-field="rate" type="button">标准（元/时）</button>
+        <button class="filltab" data-fill-field="amount" type="button">实发金额</button>
+      </div>
+
+      <textarea id="fillInput" rows="5" spellcheck="false"
+        placeholder="把从 Excel 复制的那一列粘贴到这里（每行一个数）"></textarea>
+
+      <div class="fillpanel-total" id="fillTotalBox" hidden>
+        <label class="inline-check">
+          <input type="checkbox" id="fillUseTotal">
+          改成「填总额，平均分给勾选的人」
+        </label>
+        <input type="number" id="fillTotal" min="0" step="100" placeholder="总额，如 12000" hidden>
+      </div>
+
+      <div class="fillpanel-preview" id="fillPreview"></div>
+
+      <div class="fillpanel-actions">
+        <button class="btn btn-ghost" id="btnFillCancel" type="button">取消</button>
+        <button class="btn btn-primary" id="btnFillApply" type="button" disabled>确认填入</button>
+      </div>
+    </section>
+
+    <!-- 批量：收进折叠区，默认不碍眼 -->
+    <details class="more-bar">
+      <summary>批量设置标准 / 工时 / 学院</summary>
+      <div class="more-body">
+        <label>标准
+          <input type="number" min="0" step="1" id="batchRate" class="mini">
+          <button class="btn btn-mini" data-batch-apply="rate" type="button">套用</button>
+        </label>
+        <label>工时
+          <input type="number" min="0" step="1" id="batchHours" class="mini">
+          <button class="btn btn-mini" data-batch-apply="hours" type="button">套用</button>
+        </label>
+        <label>学院
+          <input type="text" id="batchCollege" class="mini wide">
+          <button class="btn btn-mini" data-batch-apply="college" type="button">套用</button>
+        </label>
+        <span class="tip">都只作用于已勾选的学生</span>
+      </div>
+    </details>
+
+    <div class="toolbar">
+      <div class="seg">
+        <button class="seg-btn" data-select="all" type="button">全选</button>
+        <button class="seg-btn" data-select="none" type="button">全不选</button>
+        <button class="seg-btn" data-select="invert" type="button">反选</button>
+      </div>
+      <input type="search" id="search" class="search" placeholder="搜索姓名 / 学号 / 学院">
+      <div class="spacer"></div>
+      <button class="btn btn-ghost" id="btnAdd" type="button">+ 添加</button>
+      <button class="btn btn-ghost" id="btnDeleteUnchecked" type="button">删除未勾选</button>
+    </div>
+
+    <div class="table-wrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            <th class="col-check"><input type="checkbox" id="checkAll"></th>
+            <th class="col-no">序号</th>
+            <th class="col-sid">学号</th>
+            <th class="col-name">姓名</th>
+            <th class="col-college">所在学院</th>
+            <th class="col-rate">标准（元/时）</th>
+            <th class="col-hours">工　时</th>
+            <th class="col-amount">实发金额</th>
+            <th class="col-act"></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <p class="empty" id="empty" hidden>
+        还没有学生，<button class="link" data-goto="1" type="button">回到第 1 步导入</button>。
+      </p>
+    </div>
+
+    <div class="summary" id="summary"></div>
+  </section>
+
+  <!-- =================================================================
+       第 3 步：导出
+       ================================================================= -->
+  <section class="panel" data-panel="3" hidden>
+    <div class="panel-head">
+      <h2>第 3 步 · 导出</h2>
+      <p>文件会自动下载，同时保存到程序目录的 <code>output</code> 文件夹。</p>
+    </div>
+
+    <div class="export-recap" id="exportRecap"></div>
+
+    <div class="export-cards">
+      <button class="export-card" id="btnExportDocx" type="button">
+        <span class="tile-icon">📝</span>
+        <strong>Word 明细表</strong>
+        <em>武汉大学学生劳务费发放明细表<br>格式与模板一致，含合计行</em>
+      </button>
+      <button class="export-card" id="btnExportXls" type="button">
+        <span class="tile-icon">📊</span>
+        <strong>Excel 名单</strong>
+        <em>勾选学生的<br>学号 / 姓名 / 所在学院 / 标准 / 工时 / 助研津贴</em>
+      </button>
+      <button class="export-card is-primary" id="btnExportBoth" type="button">
+        <span class="tile-icon">📦</span>
+        <strong>两个都要</strong>
+        <em>一次导出上面两份文件</em>
+      </button>
+    </div>
+
+    <div class="export-label">
+      <label>文件名备注（可留空）
+        <input type="text" id="exportLabel" placeholder="如：9月第一批">
+        <em class="tip">文件名 = 兼职时段 + 备注 + 日期，换月份请改上面的「兼职时段」</em>
+      </label>
+    </div>
+
+    <div class="results" id="results"></div>
+  </section>
+
+</main>
+
+<!-- ===================== 发放信息 / 模板 抽屉 ===================== -->
+<div class="drawer-mask" id="drawerMask" hidden></div>
+<aside class="drawer" id="drawer" hidden>
+  <div class="drawer-head">
+    <h3>发放信息与模板</h3>
+    <button class="icon-btn" id="btnDrawerClose" type="button">×</button>
+  </div>
+
+  <div class="drawer-body">
+    <section class="fieldset">
+      <h4>明细表表头</h4>
+      <label class="field"><span>发放单位</span>
+        <input type="text" data-setting="unitName" placeholder="如：武汉数学与智能研究院"></label>
+      <label class="field"><span>财务项目编号</span>
+        <input type="text" data-setting="projectCode" placeholder="如：4212-413100008"></label>
+      <label class="field"><span>兼职时段</span>
+        <input type="text" data-setting="period" placeholder="如：2026年9月"></label>
+      <em class="tip">第 1 步顶部有快捷选择，这里改也一样</em>
+      <label class="field"><span>项目名称</span>
+        <input type="text" data-setting="projectName" placeholder="如：2026年才科研启动经费"></label>
+    </section>
+
+    <section class="fieldset">
+      <h4>发放事项说明</h4>
+      <label class="field">
+        <textarea data-setting="note" rows="6"
+          placeholder="留空则自动生成「本人项目组XX等N位本科生、研究生在{时段}参与科研项目…」"></textarea>
+        <em class="tip">可用占位符：<code>{人数}</code> <code>{第一位学生}</code> <code>{时段}</code> <code>{项目名称}</code></em>
+      </label>
+    </section>
+
+    <section class="fieldset">
+      <h4>名单里没填时的默认值</h4>
+      <div class="two-col">
+        <label class="field"><span>标准（元/时）</span>
+          <input type="number" min="0" step="1" data-batch="rate"></label>
+        <label class="field"><span>默认工时</span>
+          <input type="number" min="0" step="1" data-batch="hours"></label>
+      </div>
+      <label class="field"><span>学院</span>
+        <input type="text" data-batch="college" placeholder="如：国家网络安全学院">
+        <em class="tip">
+          只对<b>名单里没写学院</b>的学生生效，已经写了的不动。<br>
+          所以导入的文件<b>最好带上「所在学院」这一列</b>；没带这一列的话，就全都会用这个值。
+        </em>
+      </label>
+    </section>
+
+    <section class="fieldset">
+      <h4>模板</h4>
+      <label class="field"><span>选择模板</span><select id="tplSelect"></select></label>
+      <div class="btn-grid">
+        <button class="btn btn-primary" id="btnTplApply" type="button">套用模板</button>
+        <button class="btn btn-ghost" id="btnTplSave" type="button">存为新模板</button>
+        <button class="btn btn-ghost" id="btnTplOverwrite" type="button">覆盖当前</button>
+        <button class="btn btn-danger-ghost" id="btnTplDelete" type="button">删除模板</button>
+      </div>
+      <button class="btn btn-ghost btn-block" id="btnUploadDocx" type="button">导入其它 Word 明细表作底板</button>
+      <input type="file" id="fileDocx" accept=".docx" hidden>
+      <em class="tip">换底板后，生成的文件就以它为模板，字体格式完全照搬。</em>
+    </section>
+  </div>
+</aside>
+
+<!-- ===================== 预设编辑弹窗 ===================== -->
+<div class="modal" id="modalPreset" hidden>
+  <div class="modal-box narrow">
+    <div class="modal-head">
+      <h3 id="presetModalTitle">补贴费预设</h3>
+      <button class="icon-btn" data-close type="button">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="tip" id="presetModalHint">逗号或换行分隔，可填小数。这些按钮会出现在第 2 步顶部。</p>
+      <textarea id="presetInputModal" rows="4" spellcheck="false"
+        placeholder="500, 800, 1000, 1200, 1500, 1600, 2000"></textarea>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="btnPresetReset" type="button">恢复默认</button>
+        <button class="btn btn-primary" data-close type="button">完成</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 帮助 ===================== -->
+<div class="modal" id="modalHelp" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3>使用说明</h3>
+      <button class="icon-btn" data-close type="button">×</button>
+    </div>
+    <div class="modal-body help">
+      <h4>三步走</h4>
+      <ol>
+        <li><b>导入名单</b>：上传 <code>.xls</code> / <code>.xlsx</code> / <code>.csv</code>，或从 Excel 复制后粘贴，也可以手动加。
+          <br><b>有哪列收哪列</b>：学号、姓名、<b>所在学院</b>、标准、工时、助研津贴，列名和顺序都自动识别；没有学院列就用抽屉里的默认学院。</li>
+        <li><b>勾选 + 设金额</b>：左边打勾决定这次要发谁。金额点顶部那一排按钮就行；行内也能直接改。改工时会自动算金额，手填过金额则以你填的为准。</li>
+        <li><b>导出</b>：Word 明细表格式与模板完全一致（字体、字号、边框、行高都一样），另外可以导出勾选学生的 Excel 名单。</li>
+      </ol>
+
+      <h4>快速录入（重点）</h4>
+      <ul>
+        <li><b>从 Excel 粘一列</b>：在 Excel 里选中一列数值复制，回到这里<b>点一下要开始填的那个格子</b>，按 <code>Ctrl+V</code>，会自动往下填。工时、金额、标准、学院都支持。</li>
+        <li><b>回车 / 上下键</b>：在一个格子里按 <code>Enter</code> 或 <code>↑</code> <code>↓</code> 直接跳到下一行的同一列，不用鼠标点。</li>
+        <li><b>一排按钮设金额</b>：先勾选学生，再点 <code>1000</code> 这样的按钮，勾选的人全部设为该金额。先点进某一行的金额格再点，就只改那一行。</li>
+      </ul>
+
+      <h4>兼职时段</h4>
+      <p>第 1 步顶部就能点选：预设的月份点一下即可，也可以自己填。点「改预设…」维护那一排月份（逗号或换行分隔，例如 <code>2026年9月, 2026年10月</code>）。它决定了 Word 表头的「兼职时段」和导出文件名开头的月份。</p>
+
+      <h4>补贴费预设</h4>
+      <p>点第 2 步的「改预设…」，用逗号分隔随便改，例如 <code>500, 800, 1000, 1234.5</code>。改完自动保存，也能存进模板。</p>
+
+      <h4>发放信息 / 模板</h4>
+      <p>明细表表头（发放单位、项目编号、时段、项目名称、发放事项说明）在右上角「发放信息」里改。模板可以把整套配置存下来复用，也可以换一份 Word 明细表当底板——换了底板，导出的字体格式就跟着新底板走。</p>
+
+      <h4>数据存哪</h4>
+      <p>工作台状态在 <code>app/settings.json</code>，模板在 <code>templates/</code>，导出的文件在 <code>output/</code>，都是普通文件，可以直接备份。</p>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

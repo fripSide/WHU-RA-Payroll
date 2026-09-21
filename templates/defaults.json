@@ -1,0 +1,53 @@
+{
+  "_comment": "由 extract_defaults.py 从现有模板文件自动生成，可手工调整。period 留空 = 默认用「当前月份」；periodPresets 留空 = 默认本月起 6 个月。",
+  "_source": {
+    "docx": "助研费用发放说明(1).docx",
+    "xls": "助研费用发放模版(1).xls"
+  },
+  "settings": {
+    "unitName": "武汉数学与智能研究院",
+    "projectCode": "4212-413100008",
+    "period": "",
+    "projectName": "2026年才科研启动经费",
+    "note": "本人项目组{第一位学生}等{人数}位本科生、研究生在{时段}参与组内科研项目，负责相关研发工作。明细见下表："
+  },
+  "batch": {
+    "rate": "100",
+    "hours": "10",
+    "college": ""
+  },
+  "feePresets": [
+    "500",
+    "800",
+    "1000",
+    "1200",
+    "1500",
+    "1600",
+    "2000"
+  ],
+  "periodPresets": [],
+  "students": [
+    {
+      "id": "s1",
+      "studentId": "",
+      "name": "",
+      "college": "计算机学院",
+      "rate": "100",
+      "hours": "10",
+      "amount": "",
+      "manual": false,
+      "checked": true
+    },
+    {
+      "id": "s2",
+      "studentId": "",
+      "name": "",
+      "college": "国家网络安全学院",
+      "rate": "100",
+      "hours": "10",
+      "amount": "",
+      "manual": false,
+      "checked": true
+    }
+  ]
+}

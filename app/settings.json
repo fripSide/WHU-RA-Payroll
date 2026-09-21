@@ -1,0 +1,71 @@
+{
+  "step": 1,
+  "settings": {
+    "unitName": "武汉数学与智能研究院",
+    "projectCode": "4212-413100008",
+    "period": "2026年7月",
+    "projectName": "2026年才科研启动经费",
+    "note": "本人项目组{第一位学生}等{人数}位本科生、研究生在{时段}参与组内多个科研项目，负责方案设计以及具体开发工作。明细见下表："
+  },
+  "batch": {
+    "college": "国家网络安全学院",
+    "rate": "100",
+    "hours": "10"
+  },
+  "feePresets": [
+    "500",
+    "800",
+    "1000",
+    "1200",
+    "1500",
+    "1600",
+    "2000"
+  ],
+  "periodPresets": [
+    "2026年6月",
+    "2026年7月",
+    "2026年8月",
+    "2026年9月",
+    "2026年10月",
+    "2026年11月"
+  ],
+  "students": [
+    {
+      "id": "s1",
+      "studentId": "",
+      "name": "",
+      "college": "计算机学院",
+      "collegeAuto": false,
+      "rate": "100",
+      "hours": "10",
+      "amount": "800",
+      "manual": true,
+      "checked": true
+    },
+    {
+      "id": "s2",
+      "studentId": "",
+      "name": "",
+      "college": "国家网络安全学院",
+      "collegeAuto": false,
+      "rate": "100",
+      "hours": "10",
+      "amount": "800",
+      "manual": true,
+      "checked": true
+    },
+    {
+      "id": "s1_mub44f32",
+      "studentId": "",
+      "name": "",
+      "college": "国家网络安全学院",
+      "collegeAuto": true,
+      "rate": "100",
+      "hours": "10",
+      "amount": "800",
+      "manual": true,
+      "checked": true
+    }
+  ],
+  "savedAt": "2026-09-21T18:39:52"
+}

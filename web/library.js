@@ -16,12 +16,20 @@
       if (gid === UNGROUPED) return !person.identityId;
       return !gid || person.identityId === gid;
     }
+    /** 学号按文本比（常常超过 15 位，转数字会丢精度），没填学号的排最后。 */
+    function byStudentId(a, b) {
+      var sa = String(a.studentId || "").trim(), sb = String(b.studentId || "").trim();
+      if (!sa && !sb) return 0;
+      if (!sa) return 1;
+      if (!sb) return -1;
+      return sa < sb ? -1 : (sa > sb ? 1 : 0);
+    }
     function visible() {
       return data().people.filter(function (p) {
         return inGroup(p, identity) &&
           (!project || (p.projectIds || []).indexOf(project) >= 0) &&
           (p.name + " " + p.studentId + " " + p.college).toLowerCase().indexOf(search) >= 0;
-      });
+      }).sort(byStudentId);      // 人员库也按学号从小到大
     }
     function chip(gid, name, count, active) {
       return '<button class="group-chip' + (active ? " is-active" : "") + '" type="button" data-group="' + esc(gid) +
@@ -156,7 +164,11 @@
     $("btnRenameProject").onclick = function () { pickGroup(PROJECT); };
     $("btnDeleteIdentity").onclick = function () { dropGroup(IDENTITY); };
     $("btnDeleteProject").onclick = function () { dropGroup(PROJECT); };
-    $("btnAddGroupToBatch").onclick = function () { options.add(visible()).catch(function () {}); };
+    /** 加入本次时，把当前选中的项目组一并告诉 app —— 事由就用它。 */
+    function currentProject() {
+      return project && groups(PROJECT).some(function (g) { return g.id === project; }) ? project : "";
+    }
+    $("btnAddGroupToBatch").onclick = function () { options.add(visible(), currentProject()).catch(function () {}); };
     $("libraryRows").onclick = function (e) {
       var button = e.target.closest("[data-action]");
       if (!button || busy) return;

@@ -325,8 +325,18 @@ def _upsert_many(db, incoming_list):
     return students
 
 
+def _by_student_id(person):
+    """人员库排序：学号从小到大，没填学号的排最后。
+
+    学号按文本比——它常常超过 15 位，转成数字会丢精度。
+    """
+    sid = _text(person.get("studentId"))
+    return (1, "") if sid == "" else (0, sid)
+
+
 def _snapshot(db):
     people = [_person(db, row) for row in db.execute("SELECT * FROM people WHERE deleted=0 ORDER BY rowid")]
+    people.sort(key=_by_student_id)
     by_id = {p["id"]: p for p in people}
     workspace = _meta(db, "workspace", {})
     students = []

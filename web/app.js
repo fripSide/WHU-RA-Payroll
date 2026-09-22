@@ -351,14 +351,26 @@
     return queueWrite("/api/settings", payload, false);
   }
 
-  function addFromLibrary(people) {
+  function addFromLibrary(people, projectId) {
     people.forEach(function (p) {
       var existing = state.students.find(function (s) { return s.id === p.id; });
       if (existing) existing.checked = true;
       else state.students.push(normalizeStudent(Object.assign({}, p, {checked: true})));
     });
+    // 第 1 步是「按项目组筛人再加入本次」——那就记住这个项目，
+    // 事由里的项目名直接用它，不用再去抽屉里选一次。
+    var note = "";
+    if (projectId) {
+      var name = identityName(projectId);
+      if (name && state.settings.reasonProjectGroup !== projectId) {
+        state.settings.reasonProjectGroup = projectId;
+        note = "，事由按「" + name + "」写";
+      }
+    }
     renderAll();
-    return saveNow().then(function () { toast("已加入本次发放，可在第 2 步继续编辑", "ok"); });
+    return saveNow().then(function () {
+      toast("已加入本次发放" + note + "，可在第 2 步继续编辑", "ok");
+    });
   }
 
   function removeFromBatch(ids) {
@@ -801,8 +813,8 @@
       state.settings.reasonProjectGroup = "__off__";
       current = "__off__";
     }
-    // 刻意不自动挑一个项目组：项目名会写进正式表格，
-    // 选错比留空危险。用哪个由你在下拉里点。
+    // 不自动挑项目组：项目名会写进正式表格，选错比留空危险。
+    // 但你在第 1 步人员库里按项目组筛人再加入本次时，这里会自动变成那个项目组。
     if (select) {
       var options = '<option value="__off__">不写入项目名（留高亮待填）</option>' +
         projects.map(function (g) {

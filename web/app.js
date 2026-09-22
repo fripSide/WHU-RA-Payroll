@@ -447,10 +447,36 @@
   }
 
   // ============================================================ 表格
+  /** 学号排序键：按文本比（学号常常超过 15 位，转数字会丢精度），没填学号的排最后。 */
+  function idSortKey(student) {
+    var sid = String(student.studentId || "").trim();
+    return sid === "" ? [1, ""] : [0, sid];
+  }
+
+  /** 本次名单的展示顺序：先按身份组分段，组内按学号升序（和导出文件一致）。 */
+  function sortedStudents() {
+    return state.students.slice().sort(function (a, b) {
+      var ga = String(a.identityId || ""), gb = String(b.identityId || "");
+      if (ga !== gb) {
+        // 身份组之间按其定义顺序；未分组排最后
+        if (!ga) return 1;
+        if (!gb) return -1;
+        var order = libraryGroups("identity").map(function (g) { return g.id; });
+        var ia = order.indexOf(ga), ib = order.indexOf(gb);
+        if (ia !== ib) return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib);
+      }
+      var ka = idSortKey(a), kb = idSortKey(b);
+      if (ka[0] !== kb[0]) return ka[0] - kb[0];
+      if (ka[1] !== kb[1]) return ka[1] < kb[1] ? -1 : 1;
+      return 0;
+    });
+  }
+
   function visibleStudents() {
     var q = state.search.trim().toLowerCase();
-    if (!q) return state.students;
-    return state.students.filter(function (s) {
+    var rows = sortedStudents();
+    if (!q) return rows;
+    return rows.filter(function (s) {
       return (s.name + " " + s.studentId + " " + s.college).toLowerCase().indexOf(q) >= 0;
     });
   }
@@ -768,31 +794,17 @@
   function renderReasonBox() {
     var select = $("#reasonProjectGroup");
     var projects = libraryGroups("project");
-    var current = String(state.settings.reasonProjectGroup || "");
-    if (current && !projects.some(function (g) { return g.id === current; })) {
-      state.settings.reasonProjectGroup = "";
-      current = "";
+    // 空值等价于「不写入项目名」，用同一个哨兵值表示
+    var current = String(state.settings.reasonProjectGroup || "") || "__off__";
+    if (current && current !== "__off__" && !projects.some(function (g) { return g.id === current; })) {
+      // 选中的分组被删了，退回"不写入项目名"
+      state.settings.reasonProjectGroup = "__off__";
+      current = "__off__";
     }
-    // 有项目组、用户又没表态过，就默认套用：项目名直接写进事由，不用手动选一次
-    if (!current && projects.length && state.settings.reasonProjectGroup !== "__off__") {
-      // 优先：本次名单里确实有人属于的项目组
-      var ids = {};
-      state.students.forEach(function (s) { (s.projectIds || []).forEach(function (id) { ids[id] = true; }); });
-      var hit = projects.filter(function (g) { return ids[g.id]; })[0];
-      // 其次：和"身份组"同名的项目组（常见用法：xx项目组 里就是研究生）
-      if (!hit) {
-        var owners = {};
-        state.students.forEach(function (s) { if (s.identityId) owners[s.identityId] = true; });
-        var gids = Object.keys(owners).map(identityName);
-        hit = projects.filter(function (g) { return gids.indexOf(g.name) >= 0; })[0];
-      }
-      current = (hit || projects[0]).id;
-      state.settings.reasonProjectGroup = current;
-      scheduleSave();
-    }
+    // 刻意不自动挑一个项目组：项目名会写进正式表格，
+    // 选错比留空危险。用哪个由你在下拉里点。
     if (select) {
-      var options = '<option value="__off__"' + (state.settings.reasonProjectGroup === "__off__" ? " selected" : "") +
-        '>不套用项目组（项目名留高亮待填）</option>' +
+      var options = '<option value="__off__">不写入项目名（留高亮待填）</option>' +
         projects.map(function (g) {
           return '<option value="' + esc(g.id) + '"' + (g.id === current ? " selected" : "") +
             ">" + esc(g.name) + "</option>";

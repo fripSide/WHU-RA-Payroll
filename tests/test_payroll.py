@@ -472,6 +472,27 @@ class ApiTests(unittest.TestCase):
         self.assertIn("完成了数据清洗工作", text)
         self.assertNotIn("待填写", text)
 
+    def test_roster_is_ordered_by_student_id(self):
+        """名单按学号升序：明细表、名单表、上传表三处顺序要一致。"""
+        students = [person("c", "20260003", "丙"), person("a", "20260001", "甲"),
+                    person("b", "20260002", "乙")]
+        payload = {"settings": {"projectType": "research", "period": "2026年9月"},
+                   "students": students, "kinds": ["docx", "xls", "submission"]}
+        results = self.request("/api/export", payload)["results"]
+
+        doc = Document(results["docx"]["path"])
+        text = "".join(n.text or "" for n in doc.element.iter(qn("w:t")))
+        self.assertLess(text.index("甲"), text.index("乙"))
+        self.assertLess(text.index("乙"), text.index("丙"))
+
+        roster = xlrd.open_workbook(results["xls"]["path"]).sheet_by_index(0)
+        names = [roster.cell_value(row, 2) for row in range(1, roster.nrows)]
+        self.assertEqual(names, ["甲", "乙", "丙"])
+
+        submit = xlrd.open_workbook(results["submission"]["path"]).sheet_by_index(0)
+        ids = [submit.cell_value(row, 0) for row in range(1, submit.nrows)]
+        self.assertEqual(ids, ["20260001", "20260002", "20260003"])
+
     def test_export_rejects_missing_name_and_missing_submission_id(self):
         for students in ([person(name="")], [person(sid="")]):
             with self.assertRaises(urllib.error.HTTPError) as error:

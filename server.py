@@ -453,6 +453,8 @@ class Handler(BaseHTTPRequestHandler):
         if any(not str(s.get("name") or "").strip() for s in picked):
             raise ValueError("本次发放人员中有人未填写姓名")
         students, reason_project = _attach_group_names(students, settings)
+        # 前端会把"事由里要写的项目名"直接传进来，以它为准
+        reason_project = str(payload.get("projectName") or "").strip() or reason_project
         picked = [s for s in students if s.get("checked", True)]
         if "submission" in kinds and any(not str(s.get("studentId") or "").strip() for s in picked):
             raise ValueError("系统上传名单要求每位人员填写学号")
@@ -516,10 +518,12 @@ def _attach_group_names(students, settings):
     kinds = {g["id"]: g.get("kind", "identity") for g in library.get("groups", [])}
 
     chosen = str(settings.get("reasonProjectGroup") or "").strip()
-    project_name = ""
-    # "__off__" 是界面上「不套用项目组」的哨兵值，不是真的分组 ID
+    # "__off__" 是界面上「不写入项目名」的哨兵值，不是真的分组 ID
     if chosen and chosen != "__off__" and kinds.get(chosen) == "project":
         project_name = names.get(chosen, "")
+    else:
+        # 没选项目组就退回表头的「项目名称」（表头也空着才留成高亮的待填占位）
+        project_name = str(settings.get("projectName") or "").strip()
 
     out = []
     for student in students:

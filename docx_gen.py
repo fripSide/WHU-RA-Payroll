@@ -516,10 +516,9 @@ def build_reason(person, settings, project_name=""):
     取值优先级：
     - 这个人自己填了「发放事由及依据」 -> 原样用它
     - {身份}   -> 该人员的身份组名（研究生 / 本科生 / AI 补充 …）
-    - 项目名   -> 调用方给的项目组名（按项目组发放时统一写它）
-                  -> 没选项目组就留成高亮的「待填写项目名称」，
-                     不拿表头的项目名称去顶——表头那个是整张表的项目，
-                     不一定等于某个人实际参与的项目
+    - 项目名   -> 调用方指定的项目名（按项目组发放时就是那个项目组名，
+                  没选项目组时调用方会传表头的「项目名称」）
+                  -> 都没有就留成高亮的「待填写项目名称」，不硬塞一个可能不对的项目
     - 工作内容 -> 发放信息里填的「工作内容」
                   -> 没填就是高亮的「待填写工作内容」
     """
@@ -600,6 +599,100 @@ def _auto_note(settings):
     ])
 
 
+def set_column_widths(table, widths):
+    """按网格宽度重写整张表的列宽。
+
+    w:tblGrid 给的是每个网格列的宽度；每个格子的 w:tcW 要等于它**跨过的那几列之和**，
+    不然 Word 会按 tcW 重新排版、把 tblGrid 的调整抵消掉。
+    """
+    if not widths:
+        return
+    grid = table.find(qn("w:tblGrid"))
+    if grid is not None:
+        for column, node in zip(widths, grid.findall(qn("w:gridCol"))):
+            node.set(qn("w:w"), str(int(column)))
+    for row in table.findall(qn("w:tr")):
+        start = 0
+        for cell in row.findall(qn("w:tc")):
+            tcPr = cell.find(qn("w:tcPr"))
+            span = tcPr.find(qn("w:gridSpan")) if tcPr is not None else None
+            count = int(span.get(qn("w:val"))) if span is not None else 1
+            if tcPr is not None:
+                tcW = tcPr.find(qn("w:tcW"))
+                if tcW is None:
+                    tcW = insert_ordered(tcPr, OxmlElement("w:tcW"), TCPR_ORDER)
+                tcW.set(qn("w:w"), str(int(sum(widths[start:start + count]))))
+                tcW.set(qn("w:type"), "dxa")
+            start += count
+
+
+def _drop_vmerge(row):
+    """去掉一行的纵向合并，让每个学生各占一格。
+
+    科研模板里前两个明细行的「发放事由及依据」是**纵向合并**的
+    （第一行 w:vMerge=restart，第二行是续格），于是两个人的事由
+    会挤进同一个格子里显示。明细行必须拆开，一人一格。
+    """
+    for cell in row.findall(qn("w:tc")):
+        tcPr = cell.find(qn("w:tcPr"))
+        if tcPr is None:
+            continue
+        for node in tcPr.findall(qn("w:vMerge")):
+            tcPr.remove(node)
+
+
+def _rebalance_columns(table, layout, widths, reason_text=""):
+    """给「事由」列腾地方，总宽不变，其余列按比例缩一点。
+
+    模板里事由列只有 2705 twips（约 48mm），一句
+    "本科生贺启航参与了HP摄像头研究项目，完成了待填写工作内容工作。"
+    会折成五六行、挤得看不清。这里按这句话的实际长度算需要多宽，
+    目标是最多折成 3 行，并且最多占表格宽度的 42%（其余列还要放得下学号、金额）。
+    事由格跨了两个网格列，所以要按比例分摊到那两列上。
+    """
+    reason, span = layout.get("reason_col"), layout.get("reason_span") or 0
+    if reason is None or span < 1 or not widths:
+        return widths   # 非科研表没有事由列，列宽保持模板原样
+
+    group = list(range(reason, min(reason + span, len(widths))))
+    total = sum(widths)
+    current = sum(widths[i] for i in group)
+
+    # 按字数估宽。常数来自实测标定（tmp/calib_width.py 渲染 PDF 数折行）：
+    # 这句 33 字（约 29 个字宽）的话，在 42% 宽（约 69.5mm ≈ 3940 twips）时正好折成 2 行。
+    # 也就是说"一行放得下约 15 个字宽"⇒ 1 个字宽 ≈ 265 twips。
+    PER_UNIT = 265
+    LINES = 2
+    MAX_SHARE = 0.42      # 再宽别的列（学号、金额）就挤不下了
+    units = 0.0
+    for char in reason_text:
+        units += 1.0 if ord(char) > 0x2E80 else 0.55
+    target = current
+    if units:
+        target = max(current, min(int(units / LINES * PER_UNIT) + 200, int(total * MAX_SHARE)))
+    if target <= current:
+        return widths
+
+    others = [i for i in range(len(widths)) if i not in group]
+    pool = sum(widths[i] for i in others)
+    need = target - current
+    if pool <= need:
+        return widths
+
+    out = list(widths)
+    scale = (pool - need) / float(pool)
+    for i in group:
+        out[i] = max(120, int(widths[i] * target / float(current)))
+    for i in others:
+        out[i] = max(300, int(widths[i] * scale))
+    # 取整会让总宽差几个 twips，补到最宽的那一列上
+    delta = total - sum(out)
+    if delta:
+        widest = max(others, key=lambda i: out[i])
+        out[widest] += delta
+    return out
+
+
 def inspect_template(document):
     """Locate detail headers/total by content, supporting both bundled layouts."""
     if not document.tables:
@@ -621,8 +714,24 @@ def inspect_template(document):
         raise ValueError("模板需要至少一行人员明细和一行合计")
     if len(rows[0].findall(qn("w:tc"))) < 6 or len(rows[1].findall(qn("w:tc"))) < 2:
         raise ValueError("模板表头须包含发放单位、财务项目编号、时段和项目名称")
+
+    # 表头里"发放事由及依据"占了哪几列网格 -> 用来给它加宽
+    reason_col, reason_span = None, 0
+    column = 0
+    for cell in rows[header].findall(qn("w:tc")):
+        label = re.sub(r"\s+", "", cell_text(cell))
+        span = cell.find(qn("w:tcPr") + "/" + qn("w:gridSpan"), namespaces=cell.nsmap)
+        count = int(span.get(qn("w:val"))) if span is not None else 1
+        if "事由" in label or "依据" in label:
+            reason_col, reason_span = column, count
+            break
+        column += count
+
+    grid = document.tables[0]._tbl.find(qn("w:tblGrid"))
+    widths = [int(c.get(qn("w:w"))) for c in grid] if grid is not None else []
     return {"rows": rows, "header": header, "first": header + 1, "total": total,
-            "research": len(columns) == 5}
+            "research": len(columns) == 5, "reason_col": reason_col,
+            "reason_span": reason_span, "widths": widths}
 
 
 def extract_template(document):
@@ -672,6 +781,16 @@ def generate_docx(payload, out_path, template_path=None):
     # 明细表按学号从小到大排；没填学号的排在最后（排序稳定，保持原相对顺序）
     students = sorted(students, key=_id_sort_key)
 
+    # 先把每行的事由算出来：一来后面填表要用，二来事由列要多宽就看最长的那句
+    for student in students:
+        if not str(student.get("reason") or "").strip():
+            student["reasonText"] = build_reason(student, settings, project_name=project_name)
+
+    # 事由列在模板里又窄又是纵向合并的：按最长的句子加宽，并把合并拆开
+    longest = max((s.get("reasonText") or s.get("reason") or "" for s in students),
+                  key=len, default="")
+    set_column_widths(table, _rebalance_columns(table, layout, layout.get("widths") or [], longest))
+
     # ---- 1. 头部字段（字体沿用模板单元格自己的格式）--------------------
     head1 = rows[ROW_HEAD_1].findall(qn("w:tc"))
     set_cell_text(head1[1], settings.get("unitName", ""))
@@ -705,6 +824,8 @@ def generate_docx(payload, out_path, template_path=None):
 
     # 先补齐到足够行数（模板只有 10 个明细行位置）
     available = total_index - first
+    # 模板的明细行是纵向合并的（事由列），先拆开再克隆，保证一人一格
+    _drop_vmerge(template_row)
     if len(students) > available:
         anchor = template_row
         for _ in range(len(students) - available):
@@ -716,6 +837,8 @@ def generate_docx(payload, out_path, template_path=None):
 
     # 刷新明细行内容
     detail_rows = rows[first:rows.index(total_row)]
+    for row in detail_rows:
+        _drop_vmerge(row)
     total_cents = 0
     for index, row in enumerate(detail_rows):
         cells = row.findall(qn("w:tc"))
@@ -738,7 +861,7 @@ def generate_docx(payload, out_path, template_path=None):
                 fmt_number(amount, blank_zero=True, thousands=True),
             ]
             if layout["research"]:
-                reason = student.get("reason") or build_reason(
+                reason = student.get("reasonText") or student.get("reason") or build_reason(
                     student, settings, project_name=project_name)
                 values = [str(index + 1), student.get("name", ""), student.get("studentId", ""),
                           fmt_number(amount, blank_zero=True, thousands=True), reason]

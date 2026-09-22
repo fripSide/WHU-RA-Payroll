@@ -384,7 +384,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(text, "本科生测试甲参与了【待填写项目名称】项目，完成了【待填写工作内容】工作。")
         self.assertNotIn("等", text)
 
-        # 按项目组发放：项目名统一替换
+        # 调用方给了项目名（按项目组发放）：直接写进去
         text = docx_gen.build_reason(student, settings, project_name="国家重点研发")
         self.assertIn("参与了国家重点研发项目", text)
 
@@ -492,6 +492,56 @@ class ApiTests(unittest.TestCase):
         submit = xlrd.open_workbook(results["submission"]["path"]).sheet_by_index(0)
         ids = [submit.cell_value(row, 0) for row in range(1, submit.nrows)]
         self.assertEqual(ids, ["20260001", "20260002", "20260003"])
+
+    def test_detail_rows_are_split_and_reason_column_is_widened(self):
+        """科研模板的明细行是纵向合并的（两人挤一格）+ 事由列过窄，导出前都要处理：
+        - 拆开纵向合并，一人一格、事由各归各行
+        - 事由列按最长那句话加宽
+        """
+        # 事由留空才会用模板生成（自己填了事由的以自己写的为准，那种情况不必加宽）
+        students = []
+        for pid, sid, name in (("a", "20260001", "甲"), ("b", "20260002", "乙"), ("c", "20260003", "丙")):
+            item = person(pid, sid, name)
+            item["reason"] = ""
+            students.append(item)
+        payload = {"settings": {"projectType": "research", "period": "2026年9月",
+                                "workContent": "数据清洗与模型训练"},
+                   "students": students, "kinds": ["docx"], "projectName": "国家重点研发"}
+        path = self.request("/api/export", payload)["results"]["docx"]["path"]
+        doc = Document(path)
+        table = doc.tables[0]._tbl
+        layout = docx_gen.inspect_template(doc)
+        rows = table.findall(qn("w:tr"))
+
+        # 事由列加宽了（模板原始 2705 twips）
+        grid = table.find(qn("w:tblGrid"))
+        widths = [int(c.get(qn("w:w"))) for c in grid]
+        reason_w = sum(widths[layout["reason_col"]:layout["reason_col"] + layout["reason_span"]])
+        self.assertGreater(reason_w, 2705, "事由列没有加宽：%d" % reason_w)
+        self.assertEqual(sum(widths), sum(docx_gen.inspect_template(
+            Document(store.current_docx_template("research")))["widths"]), "总宽不该变")
+
+        # 明细行里不能再有纵向合并，且每人一行、事由各归各行
+        detail = []
+        for row in rows[layout["first"]:]:
+            cells = row.findall(qn("w:tc"))
+            if len(cells) != 5:
+                continue           # 合计行/说明行，不是明细
+            name = "".join(n.text or "" for n in cells[1].iter(qn("w:t")))
+            if not name:
+                continue
+            for cell in cells:
+                tcPr = cell.find(qn("w:tcPr"))
+                self.assertIsNone(tcPr.find(qn("w:vMerge")) if tcPr is not None else None,
+                                  "明细行还有纵向合并的格子")
+            detail.append((name, "".join(n.text or "" for n in cells[4].iter(qn("w:t")))))
+
+        self.assertEqual(len(detail), len(students), detail)
+        for name, reason in detail:
+            self.assertIn(name + "参与了", reason)
+            self.assertIn("国家重点研发", reason)
+        self.assertEqual(len(set(reason for _, reason in detail)), len(students),
+                         "两个人的事由不该是同一格内容")
 
     def test_export_rejects_missing_name_and_missing_submission_id(self):
         for students in ([person(name="")], [person(sid="")]):

@@ -109,6 +109,27 @@
   单元格里仍是数字，导回来不影响计算
 - 提交给学校系统的三列表**不加**千分位（要纯数字）
 
+#### 7. 依赖目录被"空壳"挡住导致 Excel 导出失败 —— 已修复
+
+现象：导出 Excel 报 `AttributeError: module 'xlwt' has no attribute 'Workbook'`。
+
+原因：`vendor/pylib` 里留下了**空的、而且读不了**的 `xlwt` / `xlrd` 目录
+（pip 装到一半失败、ACL 被改坏时会这样）。Python 把它当成命名空间包，
+于是 `import xlwt` **成功**但里面是空的——"能 import"不等于"能用"。
+这类目录属主是别的账户，没有管理员权限删不掉。
+
+修法（新增 `bootstrap.py`）：
+- 判断依赖时不只看"能不能 import"，还要求真的具备关键属性
+  （`xlwt.Workbook`、`xlrd.open_workbook`…），空壳一律判为不可用
+- 目录优先级 `BAOXIAO_VENDOR_DIR` -> `vendor/pylib` -> `vendor/pylib2`；
+  **读不了的目录整个判为不健康、排到最后**，可用的目录自然生效
+- 重装优先写 `vendor/pylib2`，不再往坏目录里写；缺依赖先试 pip
+  （临时目录指向依赖目录内，避开受限账户写不了系统临时目录的问题），
+  pip 不可用就用标准库直接下 wheel 解包兜底；pip 装到一半留下的空壳会先清掉
+- `run.py` 与 `server.py` 都走这套引导，**启动即自愈**，用户不用手动删目录
+- 顺带修掉一个排序 bug：逐个 `sys.path.insert(0, ...)` 会把优先级倒过来，
+  改为倒序插入，保证 `vendor/pylib` 优先于 `vendor/pylib2`（有回归测试守着）
+
 ---
 
 | 方法 | 路径 | 说明 |
@@ -132,7 +153,7 @@
 ### 验收方式
 
 ```bash
-python3 -m unittest discover -s tests -v        # 回归测试（14 项）
+python3 -m unittest discover -s tests -v        # 回归测试（17 项）
 python3 tmp/check_frontend.py                   # 前端结构自洽性（HTML/JS/CSS 对齐）
 ```
 

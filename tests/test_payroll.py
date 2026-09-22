@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -44,6 +45,127 @@ def make_temp_dir():
 
 def drop_temp_dir(path):
     shutil.rmtree(path, ignore_errors=True)
+
+
+class DependencyBootstrapTests(unittest.TestCase):
+    """vendor/pylib 里残留的坏目录会让 import 成功但包是空的：
+
+        AttributeError: module 'xlwt' has no attribute 'Workbook'
+
+    bootstrap 必须认出这种空壳、把它排到最后，并让可用的目录生效。
+    """
+
+    def setUp(self):
+        self.temp = make_temp_dir()
+
+    def tearDown(self):
+        drop_temp_dir(self.temp)
+
+    def _run(self, script):
+        """在子进程里跑，避免污染当前解释器的 sys.path / sys.modules。"""
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=str(ROOT), capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            env=dict(os.environ, PYTHONUTF8="1", PYTHONPATH=str(ROOT)))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout
+
+    def test_shadowing_dir_is_detected_and_healthy_dir_wins(self):
+        """两种坏法都要能救回来：
+        1) 目录读不了（真机上 ACL 坏掉的样子）-> 判为不健康，排到最后
+        2) 目录能读但是空的（namespace package）-> 虽然判不出不健康，
+           但只要可用的目录排在前面，import 就能拿到真包
+        """
+        root = self.temp / "app"
+        (root / "vendor" / "pylib" / "xlwt").mkdir(parents=True)      # 空壳，会遮挡
+        (root / "vendor" / "pylib" / "xlrd").mkdir(parents=True)
+        shutil.copytree(ROOT / "tmp" / "vendor" / "pylib", root / "vendor" / "pylib2")
+
+        common = (
+            "import os, sys\n"
+            "sys.path.insert(0, r'%s')\n"
+            "import bootstrap\n"
+            "bootstrap.HERE = r'%s'\n"
+            "bootstrap.DEPENDENCIES = [('xlwt','xlwt'), ('xlrd','xlrd')]\n"
+            "bootstrap.REQUIRED_ATTRS = {'xlwt': ('Workbook',), 'xlrd': ('open_workbook',)}\n"
+            % (ROOT, root)
+        )
+
+        # 1) 空目录（能读）：靠排序救回来
+        out = self._run(common + (
+            "ok, note = bootstrap.ensure_dependencies(auto_install=False)\n"
+            "import xlwt, xlrd\n"
+            "print('结果', ok)\n"
+            "print('Workbook', hasattr(xlwt, 'Workbook'))\n"
+            "print('open_workbook', hasattr(xlrd, 'open_workbook'))\n"
+            "print('来自', os.path.relpath(xlwt.__file__, bootstrap.HERE).replace(os.sep, '/'))\n"
+        ))
+        self.assertIn("结果 True", out)
+        self.assertIn("Workbook True", out)
+        self.assertIn("open_workbook True", out)
+        self.assertIn("vendor/pylib2/xlwt", out)
+
+        # 2) 目录读不了：必须被判为不健康，并排到可用目录后面
+        out = self._run(common + (
+            "bad = os.path.join(bootstrap.HERE, 'vendor', 'pylib')\n"
+            "real = bootstrap._healthy_dir\n"
+            "bootstrap._healthy_dir = lambda p: False if os.path.abspath(p) == os.path.abspath(bad) else real(p)\n"
+            "print('健康判定', bootstrap._healthy_dir(bad))\n"
+            "ok, note = bootstrap.ensure_dependencies(auto_install=False)\n"
+            "import xlwt\n"
+            "print('结果', ok)\n"
+            "print('Workbook', hasattr(xlwt, 'Workbook'))\n"
+            "print('来自', os.path.relpath(xlwt.__file__, bootstrap.HERE).replace(os.sep, '/'))\n"
+        ))
+        self.assertIn("健康判定 False", out)
+        self.assertIn("结果 True", out)
+        self.assertIn("Workbook True", out)
+        self.assertIn("vendor/pylib2/xlwt", out)
+
+    def test_primary_vendor_dir_wins_and_reinstall_avoids_it(self):
+        """有多个可用目录时按 vendor/pylib -> vendor/pylib2 的顺序取；
+        但重装要往 vendor/pylib2 装，免得再往坏目录里写。"""
+        root = self.temp / "app"
+        first = root / "vendor" / "pylib"
+        second = root / "vendor" / "pylib2"
+        for path in (first, second):
+            (path / "xlwt").mkdir(parents=True)
+            (path / "xlwt" / "__init__.py").write_text("", encoding="utf-8")
+        (first / "xlwt" / "__init__.py").write_text('MARK = "PRIMARY"\n', encoding="utf-8")
+        (second / "xlwt" / "__init__.py").write_text('MARK = "SECOND"\n', encoding="utf-8")
+
+        script = (
+            "import os, sys\n"
+            "sys.path.insert(0, r'%s')\n"
+            "import bootstrap\n"
+            "bootstrap.HERE = r'%s'\n"
+            "bootstrap.DEPENDENCIES = [('xlwt','xlwt')]\n"
+            "bootstrap.REQUIRED_ATTRS = {'xlwt': ()}\n"
+            "bootstrap.ensure_dependencies(auto_install=False)\n"
+            "import xlwt\n"
+            "print('用的', xlwt.MARK)\n"
+            "print('重装目标', os.path.relpath(bootstrap.install_target(), bootstrap.HERE))\n"
+            % (ROOT, root)
+        )
+        out = self._run(script)
+        self.assertIn("用的 PRIMARY", out)
+        self.assertIn("pylib2", out.replace("\\", "/"))
+
+    def test_root_vendor_dir_does_not_shadow_installed_packages(self):
+        """vendor/ 自己也是个目录：它排在 sys.path 上不能挡住已装的包。"""
+        script = (
+            "import sys\n"
+            "sys.path.insert(0, r'%s')\n"
+            "import bootstrap\n"
+            "bootstrap.ensure_dependencies(auto_install=False)\n"
+            "import docx, reportlab\n"
+            "print('docx', bool(docx.Document))\n"
+            "print('reportlab', bool(reportlab.__version__))\n"
+            % ROOT
+        )
+        out = self._run(script)
+        self.assertIn("docx True", out)
+        self.assertIn("reportlab True", out)
 
 
 class PersistentLibraryTests(unittest.TestCase):

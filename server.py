@@ -19,14 +19,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-# 依赖目录可用 BAOXIAO_VENDOR_DIR 覆盖；指向别处时不再加载 vendor/pylib，
-# 免得一个残缺的同名目录把可用的依赖挡在后面。
-VENDOR_DIR = os.path.abspath(os.environ.get("BAOXIAO_VENDOR_DIR")
-                             or os.path.join(HERE, "vendor", "pylib"))
-sys.path.insert(0, VENDOR_DIR)
-if os.path.abspath(os.path.join(HERE, "vendor", "pylib")) != VENDOR_DIR:
-    broken = os.path.join(HERE, "vendor", "pylib")
-    sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != broken]
+# 依赖目录交给 bootstrap 排：它会摘掉"能 import 其实是空壳"的坏目录
+# （vendor/pylib 里残留的不可读同名目录会把真包挡住，报
+#  module 'xlwt' has no attribute 'Workbook'）。必须先于其它依赖执行。
+import bootstrap       # noqa: E402
+bootstrap.ensure_dependencies()
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")

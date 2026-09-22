@@ -14,19 +14,7 @@ import sys
 import argparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VENDOR = os.path.abspath(os.environ.get("BAOXIAO_VENDOR_DIR")
-                         or os.path.join(HERE, "vendor", "pylib"))
-
 MIN_PYTHON = (3, 8)
-
-# 依赖名 -> import 名 -> pip 包名
-DEPENDENCIES = [
-    ("python-docx", "docx"),
-    ("xlrd", "xlrd"),
-    ("xlwt", "xlwt"),
-    ("openpyxl", "openpyxl"),
-    ("reportlab", "reportlab"),
-]
 
 
 def _force_utf8_output():
@@ -55,50 +43,18 @@ def banner(lines):
 
 
 def missing_dependencies():
-    """返回还没装上的 (pip名, import名)。"""
-    missing = []
-    for pip_name, module in DEPENDENCIES:
-        try:
-            __import__(module)
-        except ImportError:
-            missing.append((pip_name, module))
-    return missing
+    """返回还没装上的 (pip名, import名)。判断逻辑在 bootstrap 里（含空壳包识别）。"""
+    import bootstrap
 
-
-def install_into_vendor(missing):
-    """把缺的依赖装到 vendor/pylib（可随目录一起拷贝，不污染系统环境）。"""
-    import subprocess
-
-    os.makedirs(VENDOR, exist_ok=True)
-    names = [pip_name for pip_name, _ in missing]
-    print("  缺少依赖：%s" % ", ".join(names))
-    print("  正在安装到 vendor/pylib ...")
-    print()
-
-    commands = [
-        [sys.executable, "-m", "pip", "install", "--target", VENDOR,
-         "--disable-pip-version-check", "--no-warn-script-location"] + names,
-        [sys.executable, "-m", "pip", "install", "--user",
-         "--disable-pip-version-check"] + names,
-    ]
-    for command in commands:
-        try:
-            result = subprocess.run(command)
-        except OSError as exc:
-            print("  安装失败：%s" % exc)
-            continue
-        if result.returncode == 0:
-            print()
-            print("  安装完成。")
-            print()
-            return True
-        print()
-
-    return False
+    return bootstrap.missing()
 
 
 def preflight():
-    """检查 Python 版本与依赖；必要时自动安装。返回 True 表示可以启动。"""
+    """检查 Python 版本与依赖；必要时自动安装。返回 True 表示可以启动。
+
+    依赖是否可用交给 bootstrap 判断：它会识别"能 import 但其实是空壳"的情况
+    （vendor/pylib 里残留的坏目录会这样），把坏目录摘掉再重装到干净目录。
+    """
     if sys.version_info < MIN_PYTHON:
         banner([
             "需要 Python %d.%d 或更高版本" % MIN_PYTHON,
@@ -108,35 +64,25 @@ def preflight():
         ])
         return False
 
-    # 优先使用随项目附带的依赖目录
-    if os.path.isdir(VENDOR) and VENDOR not in sys.path:
-        sys.path.insert(0, VENDOR)
+    import bootstrap
 
-    missing = missing_dependencies()
-    if missing:
-        if not install_into_vendor(missing):
-            if VENDOR not in sys.path:
-                sys.path.insert(0, VENDOR)
-            still = missing_dependencies()
-            if still:
-                banner([
-                    "依赖安装失败，请手动执行：",
-                    "",
-                    "    %s -m pip install --target vendor/pylib %s"
-                    % (os.path.basename(sys.executable),
-                       " ".join(n for n, _ in still)),
-                    "",
-                    "若提示权限不足，可改为：",
-                    "    %s -m pip install --user %s"
-                    % (os.path.basename(sys.executable),
-                       " ".join(n for n, _ in still)),
-                ])
-                return False
+    ok, note = bootstrap.ensure_dependencies()
+    if ok:
+        return True
 
-    # 安装后重新加载路径
-    if VENDOR not in sys.path:
-        sys.path.insert(0, VENDOR)
-    return True
+    manual = [n for n, _ in bootstrap.missing()]
+    banner([
+        "依赖不可用：",
+        "",
+        "    %s" % note.replace("\n", "\n    "),
+        "",
+        "若提示权限不足，可改为：",
+        "    %s -m pip install --user %s"
+        % (os.path.basename(sys.executable), " ".join(manual)),
+        "",
+        "装好后重新运行即可。",
+    ])
+    return False
 
 
 def main():

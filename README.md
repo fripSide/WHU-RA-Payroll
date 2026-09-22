@@ -374,6 +374,7 @@ WHU-RA-Payroll/
 ├─ run.cmd                     Windows 双击入口
 ├─ run.sh                      macOS / Linux 入口
 ├─ run.py                      通用入口（找依赖 + 起服务 + 开浏览器）
+├─ bootstrap.py                依赖引导：识别坏目录、自动重装到可用的依赖目录
 ├─ server.py                   本地 HTTP 服务（界面 + 文件生成接口）
 ├─ docx_gen.py                 Word 明细表生成（OOXML 层面填充，字体照搬模板）
 ├─ pdf_gen.py                  把生成的 Word 明细表渲染成 PDF（纯 Python，不用 Office）
@@ -418,13 +419,25 @@ chmod +x run.sh
 ```
 
 **依赖装不上？**
-`run.py` 会自动装到 `vendor/pylib`。手动装：
+`run.py` 会自动装到 `vendor/pylib2`（`vendor/pylib` 坏了就绕开它）。手动装：
 ```bash
-python3 -m pip install --target vendor/pylib python-docx xlrd xlwt openpyxl reportlab
+python3 -m pip install --target vendor/pylib2 python-docx xlrd xlwt openpyxl reportlab
 ```
 依赖目录也可以放到别处（例如没有写权限时）：
 ```bash
 BAOXIAO_VENDOR_DIR=/path/to/pylib python3 run.py
+```
+
+**导出 Excel 报 `module 'xlwt' has no attribute 'Workbook'`？**
+这是依赖目录被"挡住"了——`vendor/pylib` 里如果留下一个**空的、或读不了**的 `xlwt` 目录
+（pip 装到一半失败、权限被改坏时会这样），Python 会把它当成包，于是"能 import 但里面是空的"。
+
+从这一版起程序**自己会处理**：启动时检查每个依赖是否真的能用，
+把坏目录排到最后，缺的自动装到 `vendor/pylib2`。**重启一次服务即可**，不用手动删东西。
+
+想彻底清掉那个坏目录（可选，需要管理员权限）：
+```powershell
+Remove-Item -Recurse -Force vendor\pylib\xlwt, vendor\pylib\xlrd, vendor\pylib\bin
 ```
 
 **数据会丢吗？**

@@ -437,6 +437,41 @@ class ApiTests(unittest.TestCase):
         self.assertIn("参与科研开发与实验验证", text)
         self.assertNotIn("待填写", text)
 
+    def test_export_project_group_supplies_project_name_and_leaves_work_blank(self):
+        """有项目组时，项目名直接写进事由，工作内容留空高亮。"""
+        state = self.request("/api/settings")
+        groups = {g["name"]: g["id"] for g in state["library"]["groups"]}
+        state = self.request("/api/groups/save", {
+            "revision": state["revision"], "name": "xx项目组", "kind": "project"})["workspace"]
+        project = [g["id"] for g in state["library"]["groups"] if g["name"] == "xx项目组"][0]
+
+        students = [person("h1", "20260001", "测试甲", identityName="研究生")]
+        students[0]["reason"] = ""
+        base = {"projectType": "research", "period": "2026年9月"}
+
+        # 套用项目组：项目名写进去，工作内容留高亮
+        payload = {"settings": dict(base, reasonProjectGroup=project), "students": students, "kinds": ["docx"]}
+        path = self.request("/api/export", payload)["results"]["docx"]["path"]
+        text = "".join(n.text or "" for n in Document(path).element.iter(qn("w:t")))
+        self.assertIn("参与了xx项目组项目", text)
+        self.assertIn("待填写工作内容", text)
+        self.assertNotIn("待填写项目名称", text)
+
+        # 不套用（界面上「不套用项目组」的哨兵值）：项目名也留高亮
+        payload = {"settings": dict(base, reasonProjectGroup="__off__"), "students": students, "kinds": ["docx"]}
+        path = self.request("/api/export", payload)["results"]["docx"]["path"]
+        text = "".join(n.text or "" for n in Document(path).element.iter(qn("w:t")))
+        self.assertIn("待填写项目名称", text)
+        self.assertNotIn("xx项目组", text)
+
+        # 填了工作内容就不再高亮
+        payload = {"settings": dict(base, reasonProjectGroup=project, workContent="数据清洗"),
+                   "students": students, "kinds": ["docx"]}
+        path = self.request("/api/export", payload)["results"]["docx"]["path"]
+        text = "".join(n.text or "" for n in Document(path).element.iter(qn("w:t")))
+        self.assertIn("完成了数据清洗工作", text)
+        self.assertNotIn("待填写", text)
+
     def test_export_rejects_missing_name_and_missing_submission_id(self):
         for students in ([person(name="")], [person(sid="")]):
             with self.assertRaises(urllib.error.HTTPError) as error:

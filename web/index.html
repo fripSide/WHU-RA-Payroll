@@ -394,17 +394,15 @@
         <input type="text" data-setting="workContent" placeholder="留空则在文件里高亮显示「待填写工作内容」">
         <em class="tip">填了就会写进每个人的事由；留空则留成高亮，导出后到 Word 里补。</em>
       </label>
-      <label class="field"><span>事由用哪个项目组</span>
-        <select data-setting="reasonProjectGroup" id="reasonProjectGroup">
-          <option value="">不按项目组（用上面的项目名称 / 留高亮）</option>
-        </select>
+      <label class="field"><span>事由里的项目名</span>
+        <select data-setting="reasonProjectGroup" id="reasonProjectGroup"></select>
         <em class="tip">
-          按项目组发放时选一个，<b>这一组的人事由里就统一写这个项目名</b>；
-          一个人自己填过事由的仍然以他自己写的为准。
+          选了项目组 → <b>项目名直接写进每个人的事由</b>（有项目组时默认就选上第一个，不用你动手）；<br>
+          选「不套用」→ 项目名留成<b>黄色高亮</b>，导出后到 Word / PDF 里补。
         </em>
       </label>
       <div class="reason-preview">
-        <span class="tip">导出预览（以本科生张三为例）：</span>
+        <span class="tip">导出预览（以名单里第一个人为例）：</span>
         <p id="reasonPreview" class="reason-sample"></p>
       </div>
     </section>

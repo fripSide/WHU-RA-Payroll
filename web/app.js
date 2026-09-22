@@ -468,7 +468,7 @@
       '<td class="col-rate"><input type="number" class="num" data-f="rate" min="0" step="1" placeholder="0"></td>' +
       '<td class="col-hours"><input type="number" class="num" data-f="hours" min="0" step="1" placeholder="0"></td>' +
       '<td class="col-amount"><input type="number" class="num" data-f="amount" min="0" step="100" placeholder="自动"></td>' +
-      '<td class="col-reason"><input type="text" data-f="reason" placeholder="留空使用发放说明"></td>' +
+      '<td class="col-reason"><input type="text" data-f="reason" placeholder="留空＝按模板自动生成"></td>' +
       '<td class="col-act"><button class="row-del" type="button" title="移出本次（保留人员库）">×</button></td>';
     return tr;
   }
@@ -548,8 +548,14 @@
         var raw = student[field] === null || student[field] === undefined
           ? "" : String(student[field]);
         if (input.value !== raw) input.value = raw;
-        // 列宽有限，长名字/长学院名会被输入框截断——挂个 title，鼠标停上去能看全
-        input.title = raw;
+        if (field === "reason") {
+          // 这一列留空不是"没填"，而是"按模板自动生成"，说清楚免得误会
+          input.title = raw || ("留空＝按模板自动生成：项目名取自「事由用哪个项目组」，"
+            + "工作内容在「发放信息」里填，没填就留成高亮待补");
+        } else {
+          // 列宽有限，长名字/长学院名会被输入框截断——挂个 title，鼠标停上去能看全
+          input.title = raw;
+        }
       }
     });
   }
@@ -739,8 +745,8 @@
   /** 和 docx_gen.build_reason 同一套规则，用来在界面上预览导出来长什么样。 */
   function buildReason(sample) {
     var template = String(state.settings.reasonTemplate || "").trim() || DEFAULT_REASON_TEMPLATE;
-    var project = String(state.settings.reasonProjectGroup || "").trim()
-      ? identityName(state.settings.reasonProjectGroup) : "";
+    var picked = String(state.settings.reasonProjectGroup || "").trim();
+    var project = (picked && picked !== "__off__") ? identityName(picked) : "";
     var work = String(state.settings.workContent || "").trim();
     var text = template
       .replace(/\{身份组?\}/g, sample.identityName || "")
@@ -761,14 +767,32 @@
 
   function renderReasonBox() {
     var select = $("#reasonProjectGroup");
-    if (select) {
-      var projects = libraryGroups("project");
-      var current = String(state.settings.reasonProjectGroup || "");
-      if (current && !projects.some(function (g) { return g.id === current; })) {
-        state.settings.reasonProjectGroup = "";
-        current = "";
+    var projects = libraryGroups("project");
+    var current = String(state.settings.reasonProjectGroup || "");
+    if (current && !projects.some(function (g) { return g.id === current; })) {
+      state.settings.reasonProjectGroup = "";
+      current = "";
+    }
+    // 有项目组、用户又没表态过，就默认套用：项目名直接写进事由，不用手动选一次
+    if (!current && projects.length && state.settings.reasonProjectGroup !== "__off__") {
+      // 优先：本次名单里确实有人属于的项目组
+      var ids = {};
+      state.students.forEach(function (s) { (s.projectIds || []).forEach(function (id) { ids[id] = true; }); });
+      var hit = projects.filter(function (g) { return ids[g.id]; })[0];
+      // 其次：和"身份组"同名的项目组（常见用法：xx项目组 里就是研究生）
+      if (!hit) {
+        var owners = {};
+        state.students.forEach(function (s) { if (s.identityId) owners[s.identityId] = true; });
+        var gids = Object.keys(owners).map(identityName);
+        hit = projects.filter(function (g) { return gids.indexOf(g.name) >= 0; })[0];
       }
-      var options = '<option value="">不按项目组（用上面的项目名称 / 留高亮）</option>' +
+      current = (hit || projects[0]).id;
+      state.settings.reasonProjectGroup = current;
+      scheduleSave();
+    }
+    if (select) {
+      var options = '<option value="__off__"' + (state.settings.reasonProjectGroup === "__off__" ? " selected" : "") +
+        '>不套用项目组（项目名留高亮待填）</option>' +
         projects.map(function (g) {
           return '<option value="' + esc(g.id) + '"' + (g.id === current ? " selected" : "") +
             ">" + esc(g.name) + "</option>";

@@ -517,7 +517,8 @@ def _attach_group_names(students, settings):
 
     chosen = str(settings.get("reasonProjectGroup") or "").strip()
     project_name = ""
-    if chosen and kinds.get(chosen) == "project":
+    # "__off__" 是界面上「不套用项目组」的哨兵值，不是真的分组 ID
+    if chosen and chosen != "__off__" and kinds.get(chosen) == "project":
         project_name = names.get(chosen, "")
 
     out = []

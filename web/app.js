@@ -357,20 +357,23 @@
       if (existing) existing.checked = true;
       else state.students.push(normalizeStudent(Object.assign({}, p, {checked: true})));
     });
-    // 第 1 步是「按项目组筛人再加入本次」——那就记住这个项目，
-    // 事由里的项目名直接用它，不用再去抽屉里选一次。
-    var note = "";
-    if (projectId) {
-      var name = identityName(projectId);
-      if (name && state.settings.reasonProjectGroup !== projectId) {
-        state.settings.reasonProjectGroup = projectId;
-        note = "，事由按「" + name + "」写";
-      }
-    }
+    if (projectId) useProjectForReason(projectId);
     renderAll();
     return saveNow().then(function () {
-      toast("已加入本次发放" + note + "，可在第 2 步继续编辑", "ok");
+      toast("已加入本次发放" + reasonNote(projectId) + "，可在第 2 步继续编辑", "ok");
     });
+  }
+
+  /** 把某个项目组定为事由里的项目名（点分组、加入本次都会调它）。 */
+  function useProjectForReason(projectId) {
+    if (!projectId || state.settings.reasonProjectGroup === projectId) return false;
+    state.settings.reasonProjectGroup = projectId;
+    return true;
+  }
+
+  function reasonNote(projectId) {
+    var name = projectId ? identityName(projectId) : "";
+    return name ? "，事由按「" + name + "」写" : "";
   }
 
   function removeFromBatch(ids) {
@@ -2143,6 +2146,13 @@
       defaults: function () { return state.batch; },
       currentIds: function () { return state.students.map(function (p) { return p.id; }); },
       add: addFromLibrary,
+      // 在人员库里点某个项目组就立刻生效：事由按它写，并马上存下来
+      useProject: function (projectId) {
+        if (!useProjectForReason(projectId)) return;
+        renderReasonBox();
+        saveNow().catch(function () {});
+        toast("事由改按「" + identityName(projectId) + "」写", "ok");
+      },
       backup: function () { return saveNow().then(function () { return api("/api/library/backup"); }); },
       mutate: function (path, body) { return saveNow().then(function () {
         return queueWrite(path, body, true);

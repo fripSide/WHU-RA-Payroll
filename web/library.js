@@ -148,7 +148,14 @@
     $("btnSaveAndNext").onclick = function () { save(true); };
     $("librarySearch").oninput = function (e) { search = e.target.value.trim().toLowerCase(); render(); };
     $("identityChips").onclick = function (e) { var b = e.target.closest("[data-group]"); if (b) { identity = b.dataset.group; render(); } };
-    $("projectChips").onclick = function (e) { var b = e.target.closest("[data-group]"); if (b) { project = b.dataset.group; render(); } };
+    $("projectChips").onclick = function (e) {
+      var b = e.target.closest("[data-group]");
+      if (!b) return;
+      project = b.dataset.group;
+      render();
+      // 你点了哪个项目组，事由就用哪个 —— 不用再点一次「加入本次」
+      if (project && options.useProject) options.useProject(project);
+    };
     $("btnNewGroup").onclick = function () {
       var name = $("newGroupName").value.trim();
       var kind = $("newGroupKind").value === PROJECT ? PROJECT : IDENTITY;

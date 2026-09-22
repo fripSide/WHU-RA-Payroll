@@ -245,7 +245,9 @@ class Handler(BaseHTTPRequestHandler):
             if route == "/api/settings/reset":
                 return json_response(self, {"ok": True, "workspace": store.reset_settings(parse_json_body(self).get("revision"))})
             actions = {"/api/people/save": "person.save", "/api/people/delete": "person.delete",
+                       "/api/people/bulk-save": "people.save", "/api/people/bulk-delete": "people.delete",
                        "/api/groups/save": "group.save", "/api/groups/delete": "group.delete",
+                       "/api/groups/roster": "group.roster",
                        "/api/library/import": "library.import"}
             if route in actions:
                 state = store.library_action(actions[route], parse_json_body(self))

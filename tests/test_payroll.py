@@ -76,15 +76,69 @@ class PersistentLibraryTests(unittest.TestCase):
         self.mutate("workspace", workspace={"students": [dict(state["library"]["people"][0], checked=True)]})
         self.assertEqual(people_store.load(self.path)["students"][0]["id"], "p1")
 
-    def test_custom_groups_multiple_memberships_rename_delete_keep_people(self):
-        state = self.mutate("group.save", name="博士生")
-        groups = state["library"]["groups"]
-        ids = [groups[0]["id"], groups[-1]["id"]]
-        self.mutate("person.save", person={"id": "p1", "groupIds": ids})
-        self.mutate("group.save", id=ids[1], name="博士助研")
-        state = self.mutate("group.delete", id=ids[1])
-        self.assertEqual(state["library"]["people"][0]["groupIds"], [ids[0]])
-        self.assertEqual(state["students"][0]["groupIds"], [ids[0]])
+    def test_identity_is_exclusive_and_project_groups_overlap(self):
+        """身份组互斥（防止重复发放），项目组可以和身份组、其他项目组重叠。"""
+        state = self.mutate("group.save", name="国家重点研发", kind="project")
+        groups = {g["name"]: g["id"] for g in state["library"]["groups"]}
+        grad, undergrad, project = groups["研究生"], groups["本科生"], groups["国家重点研发"]
+        self.assertEqual([g["kind"] for g in state["library"]["groups"] if g["name"] == "国家重点研发"], ["project"])
+
+        state = self.mutate("person.save", person={"id": "p1", "identityId": grad, "projectIds": [project]})
+        saved = state["library"]["people"][0]
+        self.assertEqual((saved["identityId"], saved["projectIds"]), (grad, [project]))
+
+        # 改动别的字段不能把分组弄丢
+        state = self.mutate("person.save", person={"id": "p1", "amount": "1200"})
+        saved = state["library"]["people"][0]
+        self.assertEqual((saved["identityId"], saved["projectIds"], saved["amount"]), (grad, [project], "1200"))
+
+        # 换成另一个身份组：仍然只有一个身份
+        state = self.mutate("person.save", person={"id": "p1", "identityId": undergrad})
+        self.assertEqual(state["library"]["people"][0]["identityId"], undergrad)
+
+        # 项目组不能当身份组用
+        with self.assertRaises(ValueError):
+            self.mutate("person.save", person={"id": "p1", "identityId": project})
+
+    def test_group_delete_keeps_people_and_clears_membership(self):
+        state = self.mutate("group.save", name="横向课题A", kind="project")
+        groups = {g["name"]: g["id"] for g in state["library"]["groups"]}
+        grad, project = groups["研究生"], groups["横向课题A"]
+        self.mutate("person.save", person={"id": "p1", "identityId": grad, "projectIds": [project]})
+        state = self.mutate("group.delete", id=project)
+        saved = state["library"]["people"][0]
+        self.assertEqual(saved["projectIds"], [])
+        self.assertEqual(saved["identityId"], grad)
+        state = self.mutate("group.delete", id=grad)
+        saved = state["library"]["people"][0]
+        self.assertEqual(saved["identityId"], "")
+        self.assertEqual(len(state["library"]["people"]), 1)
+
+    def test_group_roster_import_is_batch_and_blocks_cross_group_duplicates(self):
+        state = people_store.load(self.path)
+        groups = {g["name"]: g["id"] for g in state["library"]["groups"]}
+        grad, undergrad = groups["研究生"], groups["本科生"]
+
+        state = self.mutate("group.roster", id=grad, kind="identity",
+                            people=[person("p1", "20260001", "甲"), person("p2", "20260002", "乙")])
+        self.assertEqual([p["identityId"] for p in state["library"]["people"]], [grad, grad])
+
+        # 同一个人不能同时出现在两个身份组里：整批拦下来，不产生半截数据
+        with self.assertRaises(ValueError):
+            self.mutate("group.roster", id=undergrad, kind="identity",
+                        people=[person("p3", "20260003", "丙"), person("p4", "20260001", "甲")])
+        self.assertEqual(len(people_store.load(self.path)["library"]["people"]), 2)
+
+        state = self.mutate("group.roster", id=undergrad, kind="identity",
+                            people=[person("p3", "20260003", "丙")])
+        self.assertEqual(len(state["library"]["people"]), 3)
+
+        # 替换式导入：本组没再出现的人保留档案，只是脱离该组
+        state = self.mutate("group.roster", id=grad, kind="identity", replace=True,
+                            people=[person("p1", "20260001", "甲")])
+        self.assertEqual(len(state["library"]["people"]), 3)
+        moved = [p for p in state["library"]["people"] if p["name"] == "乙"][0]
+        self.assertEqual(moved["identityId"], "")
 
     def test_delete_is_explicit_stale_saves_cannot_resurrect(self):
         self.mutate("person.save", person=person("p2", "20260002", "测试乙"))
@@ -99,7 +153,7 @@ class PersistentLibraryTests(unittest.TestCase):
 
     def test_failed_transaction_preserves_existing_people_and_revision(self):
         old = people_store.load(self.path)
-        bad = person("p2", "20260002", "测试乙", groupIds=["missing"])
+        bad = person("p2", "20260002", "测试乙", identityId="missing")
         with self.assertRaises(ValueError):
             self.mutate("workspace", workspace={"students": [person(name="不应保存"), bad]})
         self.assertEqual(people_store.load(self.path), old)
@@ -108,13 +162,19 @@ class PersistentLibraryTests(unittest.TestCase):
         state = self.mutate("person.save", person=person("new-id", "20260001", "更新姓名"))
         self.assertEqual(len(state["library"]["people"]), 1)
         self.assertEqual(state["library"]["people"][0]["id"], "p1")
-        self.mutate("person.save", person={"id": "p1", "groupIds": [state["library"]["groups"][0]["id"]]})
+        groups = {g["name"]: g["id"] for g in state["library"]["groups"]}
+        self.mutate("group.save", name="横向课题A", kind="project")
+        project = [g["id"] for g in people_store.load(self.path)["library"]["groups"] if g["name"] == "横向课题A"][0]
+        self.mutate("person.save", person={"id": "p1", "identityId": groups["研究生"], "projectIds": [project]})
         backup = people_store.backup(self.path)
         other = str(self.temp / "restored.sqlite3")
         people_store.initialize(other, {"students": []})
         restored = people_store.mutate(other, "library.import", {"revision": 0, "backup": backup})
-        self.assertEqual(restored["library"]["people"][0]["name"], "更新姓名")
-        self.assertEqual(len(restored["library"]["people"][0]["groupIds"]), 1)
+        saved = restored["library"]["people"][0]
+        self.assertEqual(saved["name"], "更新姓名")
+        restored_groups = {g["name"]: g["id"] for g in restored["library"]["groups"]}
+        self.assertEqual(saved["identityId"], restored_groups["研究生"])
+        self.assertEqual(saved["projectIds"], [restored_groups["横向课题A"]])
 
 
 class ApiTests(unittest.TestCase):

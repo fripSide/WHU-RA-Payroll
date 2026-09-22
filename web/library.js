@@ -1,37 +1,67 @@
-/* Long-lived people and arbitrary groups. The app owns persistence and revisions. */
+/* 长期人员库：身份组（互斥）+ 项目组（可重叠）。数据与 revision 由 app.js 负责。 */
 (function () {
   "use strict";
   function $(id) { return document.getElementById(id); }
   function esc(value) { return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
-    return {"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c];
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
   }); }
+  var IDENTITY = "identity", PROJECT = "project", UNGROUPED = "__none__";
   window.PayrollLibrary = function (options) {
-    var group = "", search = "", editing = null, busy = false;
+    var identity = "", project = "", search = "", editing = null, busy = false;
     function data() { return options.getLibrary(); }
+    function groups(kind) {
+      return data().groups.filter(function (g) { return (g.kind || IDENTITY) === kind; });
+    }
+    function inGroup(person, gid) {
+      if (gid === UNGROUPED) return !person.identityId;
+      return !gid || person.identityId === gid;
+    }
     function visible() {
       return data().people.filter(function (p) {
-        return (!group || (group === "ungrouped" ? !p.groupIds.length : p.groupIds.indexOf(group) >= 0)) &&
+        return inGroup(p, identity) &&
+          (!project || (p.projectIds || []).indexOf(project) >= 0) &&
           (p.name + " " + p.studentId + " " + p.college).toLowerCase().indexOf(search) >= 0;
       });
     }
+    function chip(gid, name, count, active) {
+      return '<button class="group-chip' + (active ? " is-active" : "") + '" type="button" data-group="' + esc(gid) +
+        '">' + esc(name) + ' <span>' + count + "</span></button>";
+    }
     function render() {
-      var lib = data();
-      if (group && group !== "ungrouped" && !lib.groups.some(function (g) { return g.id === group; })) group = "";
-      $("libraryCount").textContent = lib.people.length + " 人 · " + lib.groups.length + " 个分组";
-      var chips = [{id:"",name:"全部人员"}, {id:"ungrouped",name:"未分组"}].concat(lib.groups);
-      $("groupChips").innerHTML = chips.map(function (g) {
-        var count = lib.people.filter(function (p) { return !g.id || (g.id === "ungrouped" ? !p.groupIds.length : p.groupIds.indexOf(g.id) >= 0); }).length;
-        return '<button class="group-chip ' + (group === g.id ? "is-active" : "") + '" type="button" data-group="' + esc(g.id) + '">' + esc(g.name) + ' <span>' + count + '</span></button>';
-      }).join("");
-      $("btnRenameGroup").hidden = $("btnDeleteGroup").hidden = !group || group === "ungrouped";
+      var lib = data(), people = lib.people;
+      if (identity && identity !== UNGROUPED && !groups(IDENTITY).some(function (g) { return g.id === identity; })) identity = "";
+      if (project && !groups(PROJECT).some(function (g) { return g.id === project; })) project = "";
+      $("libraryCount").textContent = people.length + " 人 · " +
+        groups(IDENTITY).length + " 个身份组 · " + groups(PROJECT).length + " 个项目组";
+
+      $("identityChips").innerHTML = [chip("", "全部", people.length, !identity)]
+        .concat(groups(IDENTITY).map(function (g) {
+          var count = people.filter(function (p) { return p.identityId === g.id; }).length;
+          return chip(g.id, g.name, count, identity === g.id);
+        }))
+        .concat([chip(UNGROUPED, "未分组", people.filter(function (p) { return !p.identityId; }).length,
+                      identity === UNGROUPED)])
+        .join("");
+      $("projectChips").innerHTML = [chip("", "全部项目", people.length, !project)]
+        .concat(groups(PROJECT).map(function (g) {
+          var count = people.filter(function (p) { return (p.projectIds || []).indexOf(g.id) >= 0; }).length;
+          return chip(g.id, g.name, count, project === g.id);
+        }))
+        .join("");
+      $("projectChips").hidden = groups(PROJECT).length === 0;
+      $("btnRenameIdentity").hidden = $("btnDeleteIdentity").hidden = !identity || identity === UNGROUPED;
+      $("btnRenameProject").hidden = $("btnDeleteProject").hidden = !project;
+
       var list = visible(), current = options.currentIds();
       $("btnAddGroupToBatch").disabled = !list.length || busy;
       $("libraryEmpty").hidden = list.length > 0;
-      $("libraryEmpty").textContent = lib.people.length ? "此分组或搜索条件下没有人员。" : "还没有人员，点击“新增人员”或在下面导入名单。";
+      $("libraryEmpty").textContent = people.length ? "此分组或搜索条件下没有人员。" : "还没有人员，点击“新增人员”或在下面导入名单。";
       $("libraryRows").innerHTML = list.map(function (p) {
-        var names = lib.groups.filter(function (g) { return p.groupIds.indexOf(g.id) >= 0; }).map(function (g) { return g.name; });
+        var own = groups(IDENTITY).filter(function (g) { return g.id === p.identityId; })[0];
+        var names = groups(PROJECT).filter(function (g) { return (p.projectIds || []).indexOf(g.id) >= 0; });
         return '<tr data-person="' + esc(p.id) + '"><td><strong>' + esc(p.name || "未填姓名") + '</strong><small>' + esc(p.studentId || "待补学号") + '</small></td><td>' + esc(p.college) + '</td><td>' +
-          (names.length ? names.map(function (n) { return '<span class="group-tag">' + esc(n) + '</span>'; }).join("") : '<span class="tip">未分组</span>') +
+          (own ? '<span class="group-tag">' + esc(own.name) + "</span>" : '<span class="tip">未分组</span>') + "</td><td>" +
+          (names.length ? names.map(function (g) { return '<span class="group-tag project">' + esc(g.name) + "</span>"; }).join("") : '<span class="tip">—</span>') +
           '</td><td class="library-actions"><button class="btn btn-mini" type="button" data-action="add">' + (current.indexOf(p.id) >= 0 ? "已在本次" : "加入本次") +
           '</button><button class="btn btn-mini" type="button" data-action="edit">编辑</button><button class="btn btn-danger-ghost" type="button" data-action="delete">删除人员</button></td></tr>';
       }).join("");
@@ -44,7 +74,7 @@
       });
     }
     function open(person) {
-      editing = person ? Object.assign({}, person) : {id: options.uid(), groupIds: group && group !== "ungrouped" ? [group] : []};
+      editing = person ? Object.assign({}, person) : {id: options.uid()};
       var form = $("personForm"), defaults = options.defaults();
       form.reset();
       $("personTitle").textContent = person ? "编辑人员" : "新增人员";
@@ -53,10 +83,16 @@
       });
       form.elements.amount.value = editing.manual ? editing.amount : "";
       form.elements.addToBatch.checked = !person || options.currentIds().indexOf(editing.id) >= 0;
-      $("personGroups").innerHTML = data().groups.map(function (g) {
-        return '<label class="inline-check"><input type="checkbox" name="groupIds" value="' + esc(g.id) + '" ' +
-          (editing.groupIds.indexOf(g.id) >= 0 ? "checked" : "") + '>' + esc(g.name) + '</label>';
-      }).join("") || '<span class="tip">可关闭窗口后先创建分组</span>';
+
+      var own = editing.identityId || (identity && identity !== UNGROUPED ? identity : "");
+      $("personIdentity").innerHTML = '<option value="">（未分组）</option>' + groups(IDENTITY).map(function (g) {
+        return '<option value="' + esc(g.id) + '"' + (g.id === own ? " selected" : "") + ">" + esc(g.name) + "</option>";
+      }).join("");
+      var chosen = editing.projectIds || [];
+      $("personProjects").innerHTML = groups(PROJECT).map(function (g) {
+        return '<label class="inline-check"><input type="checkbox" name="projectIds" value="' + esc(g.id) + '" ' +
+          (chosen.indexOf(g.id) >= 0 ? "checked" : "") + ">" + esc(g.name) + "</label>";
+      }).join("") || '<span class="tip">还没有项目组，可在上方添加</span>';
       $("personError").textContent = "";
       $("personModal").hidden = false;
       form.elements.name.focus();
@@ -68,11 +104,12 @@
       ["name", "studentId", "college", "rate", "hours", "amount", "reason"].forEach(function (key) { person[key] = form.elements[key].value.trim(); });
       person.manual = person.amount !== "";
       person.collegeAuto = false;
-      person.groupIds = Array.from(form.querySelectorAll('[name="groupIds"]:checked')).map(function (el) { return el.value; });
+      person.identityId = form.elements.identityId.value;
+      person.projectIds = Array.from(form.querySelectorAll('[name="projectIds"]:checked')).map(function (el) { return el.value; });
       var add = form.elements.addToBatch.checked;
       Array.from(form.querySelectorAll("button")).forEach(function (b) { b.disabled = true; });
       perform("/api/people/save", {person: person}).then(function () {
-        // A matching student ID may have reused an existing persistent record.
+        // 学号相同可能复用了已有档案，取回真正落库的那一条。
         var saved = data().people.find(function (p) { return p.id === person.id || (person.studentId && p.studentId === person.studentId); });
         return add && saved ? options.add([saved]) : null;
       }).then(function () {
@@ -82,29 +119,43 @@
         Array.from(form.querySelectorAll("button")).forEach(function (b) { b.disabled = false; });
       });
     }
+    function pickGroup(kind) {
+      var current = kind === IDENTITY ? identity : project;
+      var group = data().groups.filter(function (g) { return g.id === current; })[0];
+      var name = group && window.prompt(kind === IDENTITY ? "身份组新名称" : "项目组新名称", group.name);
+      if (name) perform("/api/groups/save", {id: current, name: name, kind: kind}).catch(function () {});
+    }
+    function dropGroup(kind) {
+      var current = kind === IDENTITY ? identity : project;
+      var group = data().groups.filter(function (g) { return g.id === current; })[0];
+      if (!group) return;
+      var note = kind === IDENTITY
+        ? "删除身份组「" + group.name + "」？组内人员会保留（变成未分组），档案不会被删除。"
+        : "删除项目组「" + group.name + "」？人员档案保留，只是不再属于这个项目组。";
+      if (window.confirm(note)) perform("/api/groups/delete", {id: current}).catch(function () {});
+    }
+
     $("btnNewPerson").onclick = function () { open(null); };
     $("personForm").onsubmit = function (e) { e.preventDefault(); save(false); };
     $("btnSaveAndNext").onclick = function () { save(true); };
     $("librarySearch").oninput = function (e) { search = e.target.value.trim().toLowerCase(); render(); };
-    $("groupChips").onclick = function (e) { var b = e.target.closest("[data-group]"); if (b) { group = b.dataset.group; render(); } };
+    $("identityChips").onclick = function (e) { var b = e.target.closest("[data-group]"); if (b) { identity = b.dataset.group; render(); } };
+    $("projectChips").onclick = function (e) { var b = e.target.closest("[data-group]"); if (b) { project = b.dataset.group; render(); } };
     $("btnNewGroup").onclick = function () {
       var name = $("newGroupName").value.trim();
+      var kind = $("newGroupKind").value === PROJECT ? PROJECT : IDENTITY;
       if (!name) return options.toast("请填写分组名称", "warn");
-      perform("/api/groups/save", {name:name}).then(function () {
+      perform("/api/groups/save", {name: name, kind: kind}).then(function () {
         $("newGroupName").value = "";
-        group = data().groups.find(function (g) { return g.name === name; }).id; render();
+        var created = data().groups.filter(function (g) { return g.name === name; })[0];
+        if (created) { if (kind === IDENTITY) identity = created.id; else project = created.id; }
+        render();
       }).catch(function () {});
     };
-    $("btnRenameGroup").onclick = function () {
-      var current = data().groups.find(function (g) { return g.id === group; });
-      var name = current && window.prompt("分组新名称", current.name);
-      if (name) perform("/api/groups/save", {id:group,name:name}).catch(function () {});
-    };
-    $("btnDeleteGroup").onclick = function () {
-      if (window.confirm("删除这个分组？组内人员会保留，仍可在“全部人员”中编辑。")) {
-        perform("/api/groups/delete", {id:group}).catch(function () {});
-      }
-    };
+    $("btnRenameIdentity").onclick = function () { pickGroup(IDENTITY); };
+    $("btnRenameProject").onclick = function () { pickGroup(PROJECT); };
+    $("btnDeleteIdentity").onclick = function () { dropGroup(IDENTITY); };
+    $("btnDeleteProject").onclick = function () { dropGroup(PROJECT); };
     $("btnAddGroupToBatch").onclick = function () { options.add(visible()).catch(function () {}); };
     $("libraryRows").onclick = function (e) {
       var button = e.target.closest("[data-action]");
@@ -134,6 +185,6 @@
         return perform("/api/library/import", {backup:backup});
       }).catch(function (err) { options.toast("导入失败：" + err.message,"err"); }).then(function () { e.target.value = ""; });
     };
-    return {render:render, open:open};
+    return {render:render, open:open, groups:groups};
   };
 })();

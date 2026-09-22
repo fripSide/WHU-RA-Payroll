@@ -68,19 +68,37 @@
         </div>
       </div>
       <div class="group-editor">
-        <input id="newGroupName" type="text" maxlength="80" placeholder="新分组名称，如博士生" aria-label="新分组名称">
+        <select id="newGroupKind" aria-label="分组类型">
+          <option value="identity">身份组（一人只能有一个）</option>
+          <option value="project">项目组（可同时属于多个）</option>
+        </select>
+        <input id="newGroupName" type="text" maxlength="80" placeholder="新分组名称，如博士生 / 国家重点研发" aria-label="新分组名称">
         <button id="btnNewGroup" class="btn btn-ghost" type="button">添加分组</button>
-        <span class="tip">一位人员可加入多个分组</span>
+        <span class="tip">身份组互斥，避免同一人重复发放；项目组可重叠</span>
       </div>
-      <div id="groupChips" class="group-chips" aria-label="人员分组"></div>
+      <div class="group-section">
+        <div class="group-section-head"><span class="group-kind-label">身份组</span>
+          <span class="tip">每人只能属于一个；导入名单和批量勾选都按它来</span>
+          <button id="btnRenameIdentity" class="btn btn-mini" type="button" hidden>改名</button>
+          <button id="btnDeleteIdentity" class="btn btn-danger-ghost btn-mini" type="button" hidden>删除</button>
+        </div>
+        <div id="identityChips" class="group-chips" aria-label="身份分组"></div>
+      </div>
+      <div class="group-section">
+        <div class="group-section-head"><span class="group-kind-label">项目组</span>
+          <span class="tip">用来筛选和批量勾选，一个人可以在多个项目组里</span>
+          <button id="btnRenameProject" class="btn btn-mini" type="button" hidden>改名</button>
+          <button id="btnDeleteProject" class="btn btn-danger-ghost btn-mini" type="button" hidden>删除</button>
+        </div>
+        <div id="projectChips" class="group-chips" aria-label="项目分组"></div>
+      </div>
       <div class="library-toolbar">
         <input id="librarySearch" type="search" placeholder="搜索姓名、学号或学院" aria-label="搜索人员库">
         <button id="btnAddGroupToBatch" class="btn btn-primary" type="button">将当前列表加入本次</button>
-        <button id="btnRenameGroup" class="btn btn-ghost" type="button" hidden>分组改名</button>
-        <button id="btnDeleteGroup" class="btn btn-danger-ghost" type="button" hidden>删除分组</button>
       </div>
+      <div id="groupChips" class="group-chips" aria-label="人员分组" hidden></div>
       <div class="library-table-wrap"><table class="library-table">
-        <thead><tr><th>姓名 / 学号</th><th>所在学院</th><th>分组</th><th>操作</th></tr></thead>
+        <thead><tr><th>姓名 / 学号</th><th>所在学院</th><th>身份组</th><th>项目组</th><th>操作</th></tr></thead>
         <tbody id="libraryRows"></tbody>
       </table><p id="libraryEmpty" class="tip">还没有人员，点击“新增人员”或在下面导入名单。</p></div>
     </section>
@@ -97,6 +115,12 @@
       <button class="btn btn-mini" id="btnPeriodEdit" type="button">改预设…</button>
       <span class="bar-gap"></span>
       <span class="tip" id="periodHint"></span>
+    </div>
+
+    <div class="import-group-bar">
+      <span class="bar-label">导入到分组</span>
+      <select id="importGroup" aria-label="导入到哪个分组" data-setting="importGroup"></select>
+      <span class="tip">这份名单里的人会整批归入该组；已有其他身份组的人会先拦下来提示，不会重复发放</span>
     </div>
 
     <div class="import-grid">
@@ -230,6 +254,13 @@
       </div>
     </details>
 
+    <div class="group-select-bar">
+      <span class="bar-label">按分组勾选</span>
+      <div id="groupSelectChips" class="group-chips"></div>
+      <span class="bar-gap"></span>
+      <span class="tip">点分组名可全选/全不选整组；点「设金额」只给这一组填</span>
+    </div>
+
     <div class="toolbar">
       <div class="seg">
         <button class="seg-btn" data-select="all" type="button">全选</button>
@@ -248,6 +279,7 @@
           <tr>
             <th class="col-check"><input type="checkbox" id="checkAll"></th>
             <th class="col-no">序号</th>
+            <th class="col-group">身份组</th>
             <th class="col-sid">学号</th>
             <th class="col-name">姓名</th>
             <th class="col-college">所在学院</th>
@@ -446,7 +478,14 @@
         <label class="field">学号<input name="studentId" type="text" placeholder="可稍后补充"></label>
       </div>
       <label class="field">所在学院<input name="college" type="text"></label>
-      <fieldset class="person-groups"><legend>所属分组（可多选）</legend><div id="personGroups"></div></fieldset>
+      <div class="two-col">
+        <label class="field">身份组（只能选一个）
+          <select name="identityId" id="personIdentity"></select>
+        </label>
+        <label class="field">项目组（可多选）
+          <span class="check-row" id="personProjects"></span>
+        </label>
+      </div>
       <div class="two-col">
         <label class="field">标准（元/时）<input name="rate" type="number" min="0" step="0.01"></label>
         <label class="field">工时<input name="hours" type="number" min="0" step="0.01"></label>

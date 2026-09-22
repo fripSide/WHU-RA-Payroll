@@ -619,3 +619,27 @@ body.project-nonresearch .col-reason { display: none; }
 body:not(.project-nonresearch) .grid { min-width: 1150px; }
 .export-cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 @media (max-width: 700px) { .library { padding: 12px; margin: 12px; } .library-table { min-width: 640px; } .library-toolbar input { width: 100%; } }
+
+/* 分组：身份组（互斥）+ 项目组（可重叠） */
+.group-section { margin: 12px 0; }
+.group-section-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.group-kind-label { font-weight: 600; font-size: 13px; color: var(--ink); }
+.group-tag.project { background: #eaf3e8; color: #3d6b33; }
+.group-editor select { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: white; }
+.check-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 0; }
+.group-select-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0 10px; }
+.group-select-bar .group-chip { font-size: 13px; }
+.group-chip.is-part { border-color: var(--brand); background: #eef5ff; color: var(--brand); }
+.import-group-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+.import-group-bar select { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: white; min-width: 230px; }
+.group-row .group-cell { background: #eef3fb; border-top: 2px solid #d6e2f2; text-align: left; padding: 6px 10px; }
+.group-row .group-name { font-weight: 600; margin: 0 6px; }
+.group-row .group-count { color: var(--ink-2); font-size: 12px; }
+.group-row-actions { margin-left: 12px; }
+.group-row-actions button { margin-right: 4px; }
+.col-group { width: 104px; min-width: 104px; }
+select.group-pick { width: 100%; border: 1px solid transparent; background: transparent; padding: 5px 4px; border-radius: 4px; font: inherit; color: inherit; }
+select.group-pick:hover, select.group-pick:focus { border-color: var(--line); background: white; }
+select.group-pick.is-orphan { color: var(--danger); }
+tr.is-clash td { background: #fdeceb; }
+.clash { color: var(--danger); font-size: 12px; }

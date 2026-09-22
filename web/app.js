@@ -50,6 +50,8 @@
     tplId: "",
     pending: null,
     pasteTarget: null,
+    presetGroup: null,      // 「给本组设金额…」的目标分组，null 表示没有
+    importGroup: "",        // 第 1 步「导入到分组」选中的身份组
     library: {groups: [], people: []}, revision: null, writeQueue: Promise.resolve(),
     editSerial: 0, saving: false, conflict: false,
     saveTimer: null
@@ -59,6 +61,7 @@
   var DRAFT_KEY = "whu-payroll-draft-v1";
   var seq = 1;
   var rowCache = new Map();
+  var groupRowCache = new Map();
 
   // ============================================================ 小工具
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -111,6 +114,32 @@
     return state.students.filter(function (s) { return s.checked; });
   }
 
+  // ---------------------------------------------------------- 分组
+  function libraryGroups(kind) {
+    return (state.library.groups || []).filter(function (g) {
+      return (g.kind || "identity") === (kind || "identity");
+    });
+  }
+
+  function identityName(id) {
+    var hit = libraryGroups("identity").filter(function (g) { return g.id === id; })[0];
+    return hit ? hit.name : "";
+  }
+
+  /** 本次名单里出现的身份组，按人员库里的顺序；未分组的排最后。 */
+  function batchIdentities() {
+    var used = {};
+    state.students.forEach(function (s) { used[s.identityId || ""] = true; });
+    var out = libraryGroups("identity").filter(function (g) { return used[g.id]; })
+      .map(function (g) { return { id: g.id, name: g.name }; });
+    if (used[""]) out.push({ id: "", name: "未分组" });
+    return out;
+  }
+
+  function studentsOfGroup(gid) {
+    return state.students.filter(function (s) { return (s.identityId || "") === gid; });
+  }
+
   function studentById(id) {
     for (var i = 0; i < state.students.length; i++) {
       if (state.students[i].id === id) return state.students[i];
@@ -135,7 +164,8 @@
       hours: seed.hours || (state.batch.hours === "0" ? "" : (state.batch.hours || "")),
       amount: seed.amount || "",
       manual: !!seed.manual,
-      reason: seed.reason || "", groupIds: (seed.groupIds || []).slice(), customFields: seed.customFields || {},
+      reason: seed.reason || "", identityId: seed.identityId || "",
+      projectIds: (seed.projectIds || []).slice(), customFields: seed.customFields || {},
       checked: seed.checked !== false
     };
   }
@@ -148,7 +178,8 @@
     var student = newStudent({
       id: raw.id, studentId: raw.studentId, name: raw.name, college: raw.college,
       rate: raw.rate, hours: raw.hours, amount: amount, manual: manual,
-      checked: raw.checked, reason: raw.reason, groupIds: raw.groupIds, customFields: raw.customFields
+      checked: raw.checked, reason: raw.reason, identityId: raw.identityId,
+      projectIds: raw.projectIds, customFields: raw.customFields
     });
     // 本地存过的标记优先（用户可能已经知道这是默认值）
     if (raw.collegeAuto !== undefined && raw.collegeAuto !== null) {
@@ -415,6 +446,7 @@
     tr.innerHTML =
       '<td class="col-check"><input type="checkbox" data-f="checked"></td>' +
       '<td class="col-no" data-no></td>' +
+      '<td class="col-group"><select data-f="identityId" class="group-pick" title="身份组（只能属于一个）"></select></td>' +
       '<td class="col-sid"><input type="text" class="sid" data-f="studentId" placeholder="学号"></td>' +
       '<td class="col-name"><input type="text" data-f="name" placeholder="姓名"></td>' +
       '<td class="col-college"><input type="text" data-f="college" placeholder="学院"></td>' +
@@ -426,6 +458,34 @@
     return tr;
   }
 
+  /** 分组表头行：整组全选 / 全不选 / 只给这一组设金额。 */
+  function buildGroupRow(gid, name) {
+    var tr = document.createElement("tr");
+    tr.className = "group-row";
+    tr.dataset.groupRow = gid;
+    tr.innerHTML = '<td class="group-cell" colspan="11">' +
+      '<label class="inline-check"><input type="checkbox" data-group-check></label>' +
+      '<span class="group-name">' + esc(name) + '</span>' +
+      '<span class="group-count" data-group-count></span>' +
+      '<span class="group-row-actions">' +
+      '<button class="btn btn-mini" type="button" data-group-action="check">全选本组</button>' +
+      '<button class="btn btn-mini" type="button" data-group-action="uncheck">全不选本组</button>' +
+      '<button class="btn btn-mini" type="button" data-group-action="amount">给本组设金额…</button>' +
+      '</span></td>';
+    return tr;
+  }
+
+  function fillGroupRow(tr, gid, name) {
+    var members = studentsOfGroup(gid);
+    var picked = members.filter(function (s) { return s.checked; }).length;
+    $(".group-name", tr).textContent = name;
+    $("[data-group-count]", tr).textContent =
+      members.length + " 人 · 已勾选 " + picked + " 人";
+    var box = $("[data-group-check]", tr);
+    box.checked = members.length > 0 && picked === members.length;
+    box.indeterminate = picked > 0 && picked < members.length;
+  }
+
   function fillRow(tr, student, index) {
     if (tr.dataset.checked !== String(student.checked)) {
       tr.dataset.checked = String(student.checked);
@@ -434,12 +494,24 @@
     }
     $("[data-no]", tr).textContent = String(index + 1);
 
-    $$("input[data-f]", tr).forEach(function (input) {
+    $$("[data-f]", tr).forEach(function (input) {
       var field = input.dataset.f;
       if (field === "checked") return;
       if (document.activeElement === input) return;
 
-      if (field === "amount") {
+      if (field === "identityId") {
+        var options = '<option value="">（未分组）</option>' + libraryGroups("identity").map(function (g) {
+          return '<option value="' + esc(g.id) + '">' + esc(g.name) + "</option>";
+        }).join("");
+        if (input.dataset.signature !== options) {
+          input.dataset.signature = options;
+          input.innerHTML = options;
+        }
+        if (input.value !== (student.identityId || "")) input.value = student.identityId || "";
+        var known = libraryGroups("identity").some(function (g) { return g.id === student.identityId; });
+        input.classList.toggle("is-orphan", !!student.identityId && !known);
+        input.title = "身份组（只能属于一个）：决定它归哪一组发放";
+      } else if (field === "amount") {
         var value = effAmount(student);
         if (input.value !== value) input.value = value;
         input.classList.toggle("manual", !!student.manual);
@@ -487,23 +559,110 @@
       if (!seen.has(id)) { tr.remove(); rowCache.delete(id); }
     });
 
+    // 按身份组排序，并在每组前面插一行组头（整组勾选 / 整组设金额）。
+    var rank = {};
+    batchIdentities().forEach(function (g, i) { rank[g.id] = i; });
     var order = new Map(rows.map(function (s, i) { return [s.id, i]; }));
-    $$("tr", tbody)
+    var sorted = $$("tr", tbody).filter(function (tr) { return tr.dataset.id; })
       .sort(function (a, b) {
+        var sa = studentById(a.dataset.id), sb = studentById(b.dataset.id);
+        var ga = sa ? (rank[sa.identityId || ""] || 0) : 0;
+        var gb = sb ? (rank[sb.identityId || ""] || 0) : 0;
+        if (ga !== gb) return ga - gb;
         return (order.get(a.dataset.id) || 0) - (order.get(b.dataset.id) || 0);
-      })
-      .forEach(function (tr) { tbody.appendChild(tr); });
+      });
+
+    var headers = groupRowCache;
+    headers.forEach(function (tr, gid) {
+      if (!rank.hasOwnProperty(gid)) { tr.remove(); headers.delete(gid); }
+    });
+    var previous = null;
+    sorted.forEach(function (tr) {
+      var student = studentById(tr.dataset.id);
+      var gid = student ? (student.identityId || "") : "";
+      if (!previous || previous.gid !== gid) {
+        var header = headers.get(gid);
+        if (!header) {
+          header = buildGroupRow(gid, gid ? identityName(gid) : "未分组");
+          headers.set(gid, header);
+        }
+        fillGroupRow(header, gid, gid ? identityName(gid) : "未分组");
+        tbody.insertBefore(header, tr);
+        previous = { gid: gid };
+      }
+      tbody.appendChild(tr);
+    });
+    // 只有一组时不必显示组头，省得界面啰嗦
+    var showHeaders = batchIdentities().length > 1;
+    headers.forEach(function (tr) { tr.hidden = !showHeaders; });
 
     $("#empty").hidden = state.students.length > 0;
     if (state.students.length === 0 && rowCache.size) {
       tbody.innerHTML = "";
       rowCache.clear();
+      headers.clear();
     }
 
+    renderGroupSelect();
     renderSummary();
     renderImported();
     renderStepInfo();
     refreshTableHeight();
+  }
+
+  /** 第 2 步顶部的「按分组勾选」一排：点一下整组打勾，或只给这一组设金额。 */
+  function renderGroupSelect() {
+    var bar = $("#groupSelectChips");
+    if (!bar) return;
+    var groups = batchIdentities();
+    bar.hidden = groups.length === 0;
+    bar.innerHTML = groups.map(function (g) {
+      var members = studentsOfGroup(g.id);
+      var picked = members.filter(function (s) { return s.checked; }).length;
+      var cls = "group-chip" + (picked === members.length && members.length ? " is-active" : "") +
+        (picked > 0 && picked < members.length ? " is-part" : "");
+      return '<button class="' + cls + '" type="button" data-batch-group="' + esc(g.id) + '"' +
+        ' title="点一下全选/全不选「' + esc(g.name) + '」">' + esc(g.name) +
+        " <span>" + picked + "/" + members.length + "</span></button>";
+    }).join("");
+  }
+
+  /** 整组勾选 / 全不选：勾选金额时按分组来。 */
+  function setGroupChecked(gid, checked) {
+    var members = studentsOfGroup(gid);
+    if (!members.length) return;
+    members.forEach(function (s) { s.checked = !!checked; });
+    renderTable();
+    scheduleSave();
+    toast((checked ? "已勾选" : "已取消") + "「" + (gid ? identityName(gid) : "未分组") +
+      "」的 " + members.length + " 人", "ok");
+  }
+
+  /** 改某个人的身份组：本次名单和人员库一起改，保证"一人只在一组"。 */
+  function setIdentity(studentId, gid) {
+    var student = studentById(studentId);
+    if (!student || (student.identityId || "") === (gid || "")) return;
+    var previous = student.identityId || "";
+    student.identityId = gid || "";
+    renderTable();
+    var person = state.library.people.filter(function (p) { return p.id === student.id; })[0];
+    if (!person) { scheduleSave(); return; }
+    // 人员库以服务端为准：失败就把界面回滚，别让两边不一致。
+    return queueWrite("/api/people/save", function () {
+      return { person: Object.assign({}, person, { identityId: student.identityId }) };
+    }, false).then(function () {
+      toast("已移到「" + (student.identityId ? identityName(student.identityId) : "未分组") + "」", "ok");
+    }).catch(function () {
+      var current = studentById(studentId);
+      if (current) current.identityId = previous;
+      renderTable();
+    });
+  }
+
+  function renderGroupHeaders() {
+    groupRowCache.forEach(function (tr, gid) {
+      fillGroupRow(tr, gid, gid ? identityName(gid) : "未分组");
+    });
   }
 
   function renderSummary() {
@@ -656,6 +815,19 @@
   function applyPreset(value) {
     var amount = toNum(value);
     if (isNaN(amount)) return;
+
+    // 从某个分组的「给本组设金额…」进来的：只改这一组
+    if (state.presetGroup !== null && state.presetGroup !== undefined) {
+      var gid = state.presetGroup;
+      state.presetGroup = null;
+      var members = studentsOfGroup(gid);
+      if (!members.length) return toast("这一组已经没有人员了", "warn");
+      blurActiveAmount();
+      setAmounts(members, amount);
+      renderTable(); renderRecap(); scheduleSave();
+      return toast("已把「" + (gid ? identityName(gid) : "未分组") + "」的 " +
+        members.length + " 人设为 " + fmt(amount) + " 元", "ok");
+    }
 
     // 正在编辑某一行：只改这一行
     var focused = document.activeElement;
@@ -855,11 +1027,12 @@
   function moveFocus(input, delta) {
     var tr = input.closest("tr");
     var field = input.dataset.f;
-    var rows = $$("#tbody tr");
+    // 分组表头行不是数据行，跳行时要绕开
+    var rows = $$("#tbody tr").filter(function (row) { return row.dataset.id; });
     var index = rows.indexOf(tr);
     var next = rows[index + delta];
     if (!next) return false;
-    var target = next.querySelector('input[data-f="' + field + '"]');
+    var target = next.querySelector('[data-f="' + field + '"]');
     if (!target) return false;
     target.focus();
     target.select && target.select();
@@ -896,32 +1069,86 @@
       $("#preview").hidden = true;
       return;
     }
-    $("#previewTitle").textContent = "解析到 " + list.length + " 位学生 · " + payloadData.source;
+    var target = state.importGroup ? identityName(state.importGroup) : "";
+    $("#previewTitle").textContent = "解析到 " + list.length + " 位学生 · " + payloadData.source +
+      (target ? " · 导入到「" + target + "」" : " · 不改变分组");
     $("#previewList").innerHTML =
-      '<table><thead><tr><th>学号</th><th>姓名</th><th>津贴/金额</th><th>状态</th></tr></thead><tbody>' +
+      '<table><thead><tr><th>学号</th><th>姓名</th><th>津贴/金额</th><th>分组</th><th>状态</th></tr></thead><tbody>' +
       list.slice(0, 200).map(function (s) {
         var hit = findMatch(s, state.students) || findMatch(s, state.library.people);
-        return '<tr class="' + (hit ? "is-update" : "") + '">' +
+        // 已经在别的身份组里：这份名单不能直接收，得说清楚是卡在哪。
+        var clash = "";
+        if (state.importGroup && hit && hit.identityId && hit.identityId !== state.importGroup) {
+          clash = identityName(hit.identityId) || "其他分组";
+        }
+        var groupCell = clash
+          ? '<span class="clash">已在「' + esc(clash) + "」，需先移出</span>"
+          : (target ? esc(target) : (hit && identityName(hit.identityId) ? esc(identityName(hit.identityId)) : "—"));
+        return '<tr class="' + (clash ? "is-clash" : (hit ? "is-update" : "")) + '">' +
           '<td class="mono">' + esc(s.studentId) + "</td>" +
           "<td>" + esc(s.name) + "</td>" +
           "<td>" + esc(s.amount) + "</td>" +
-          "<td>" + (hit ? "更新已有" : "新增") + "</td></tr>";
+          "<td>" + groupCell + "</td>" +
+          "<td>" + (clash ? "冲突" : (hit ? "更新已有" : "新增")) + "</td></tr>";
       }).join("") +
-      (list.length > 200 ? '<tr><td colspan="4">… 其余 ' + (list.length - 200) + " 位省略</td></tr>" : "") +
+      (list.length > 200 ? '<tr><td colspan="5">… 其余 ' + (list.length - 200) + " 位省略</td></tr>" : "") +
       "</tbody></table>";
     $("#preview").hidden = false;
   }
 
   function confirmImport() {
     if (!state.pending) return;
-    var result = mergeStudents(state.pending.students, $("#mergeToggle").checked);
+    var students = state.pending.students;
+    var gid = state.importGroup;
     state.pending = null;
     $("#preview").hidden = true;
     $("#pasteArea").value = "";
     $("#pasteBox").hidden = true;
+
+    if (gid) {
+      // 按分组批量导入：整份名单进同一个身份组，服务端一次事务写入。
+      postJSON("/api/groups/roster", { id: gid, kind: "identity", people: students }).then(function (data) {
+        acceptWorkspace(data.workspace, false);
+        // 人员库已经是权威数据：按学号把本次名单对齐到刚导入的结果。
+        students.forEach(function (raw) {
+          var person = findMatch(raw, state.library.people);
+          if (person) raw.id = person.id;
+        });
+        var result = mergeStudents(students, true);
+        state.students.forEach(function (s) {
+          var person = state.library.people.filter(function (p) { return p.id === s.id; })[0];
+          if (person) s.identityId = person.identityId || "";
+        });
+        renderAll();
+        return saveNow().then(function () {
+          toast("已把 " + students.length + " 位学生导入「" + identityName(gid) + "」：新增 " +
+            result.added + " 人，更新 " + result.updated + " 人", "ok");
+          if (state.students.length) gotoStep(2);
+        });
+      }).catch(function (err) {
+        toast(err.message, "err");
+      });
+      return;
+    }
+
+    var outcome = mergeStudents(students, $("#mergeToggle").checked);
     renderTable(); saveNow();
-    toast("导入完成：新增 " + result.added + " 人，更新 " + result.updated + " 人", "ok");
+    toast("导入完成：新增 " + outcome.added + " 人，更新 " + outcome.updated + " 人", "ok");
     if (state.students.length) gotoStep(2);
+  }
+
+  /** 「导入到分组」下拉：列出人员库里所有身份组。 */
+  function renderImportGroup() {
+    var select = $("#importGroup");
+    if (!select) return;
+    var list = libraryGroups("identity");
+    if (state.importGroup && !list.some(function (g) { return g.id === state.importGroup; })) {
+      state.importGroup = "";
+    }
+    select.innerHTML = '<option value="">不改变分组（按学号匹配）</option>' + list.map(function (g) {
+      return '<option value="' + esc(g.id) + '"' +
+        (g.id === state.importGroup ? " selected" : "") + ">" + esc(g.name) + "</option>";
+    }).join("");
   }
 
   function uploadRoster(file) {
@@ -1462,6 +1689,10 @@
       renderTable();
     });
     $("#btnAdd").addEventListener("click", function () { addStudent(); });
+    $("#importGroup").addEventListener("change", function (e) {
+      state.importGroup = e.target.value;
+      if (state.pending) showPreview(state.pending);   // 预览里的"分组"列跟着更新
+    });
     $("#btnDeleteUnchecked").addEventListener("click", function () {
       var ids = state.students.filter(function (p) { return !p.checked; }).map(function (p) { return p.id; });
       if (!ids.length) return toast("没有未勾选人员", "warn");
@@ -1516,22 +1747,52 @@
       scheduleSave();
     });
 
-    // --- 表格：勾选 ---
+    // --- 表格：勾选 / 切换身份组 ---
     $("#tbody").addEventListener("change", function (event) {
       var input = event.target;
-      if (!input.dataset || input.dataset.f !== "checked") return;
+      if (!input.dataset) return;
+
+      if (input.dataset.groupCheck !== undefined) {
+        setGroupChecked(input.closest("tr").dataset.groupRow, input.checked);
+        return;
+      }
+      if (input.dataset.f === "identityId") {
+        setIdentity(input.closest("tr").dataset.id, input.value);
+        return;
+      }
+      if (input.dataset.f !== "checked") return;
       var tr = input.closest("tr");
       var student = studentById(tr.dataset.id);
       if (!student) return;
       student.checked = input.checked;
       tr.dataset.checked = String(input.checked);
       tr.classList.toggle("is-unchecked", !input.checked);
+      renderGroupSelect();
+      renderGroupHeaders();
       renderSummary(); renderStepInfo(); renderRecap();
       scheduleSave();
     });
 
-    // --- 表格：删除 ---
+    // --- 表格：分组表头（全选 / 全不选 / 给本组设金额）---
     $("#tbody").addEventListener("click", function (event) {
+      var groupBtn = event.target.closest("[data-group-action]");
+      if (groupBtn) {
+        var gid = groupBtn.closest("tr").dataset.groupRow;
+        var action = groupBtn.dataset.groupAction;
+        if (action === "check" || action === "uncheck") setGroupChecked(gid, action === "check");
+        if (action === "amount") {
+          var members = studentsOfGroup(gid);
+          if (!members.length) { toast("这一组没有人员", "warn"); return; }
+          var label = gid ? identityName(gid) : "未分组";
+          var answer = window.prompt(
+            "给「" + label + "」的 " + members.length + " 人统一设多少元？（留空取消）",
+            state.feePresets && state.feePresets.length ? state.feePresets[0] : "1000");
+          if (answer === null || answer.trim() === "") return;
+          state.presetGroup = gid;
+          applyPreset(answer.trim());
+        }
+        return;
+      }
       var btn = event.target.closest(".row-del");
       if (!btn) return;
       var tr = btn.closest("tr");
@@ -1539,6 +1800,16 @@
       var student = studentById(id);
       if (!student) return;
       removeFromBatch([id]).catch(function () {});
+    });
+
+    // --- 第 2 步顶部：按分组勾选 ---
+    $("#groupSelectChips").addEventListener("click", function (event) {
+      var chip = event.target.closest("[data-batch-group]");
+      if (!chip) return;
+      var gid = chip.dataset.batchGroup;
+      var members = studentsOfGroup(gid);
+      var allPicked = members.length > 0 && members.every(function (s) { return s.checked; });
+      setGroupChecked(gid, !allPicked);
     });
 
     // --- 表格：粘贴一列 / 回车跳行 ---
@@ -1733,6 +2004,7 @@
     renderPeriod();
     renderPresets();
     renderTemplates();
+    renderImportGroup();
     renderTable();
     renderRecap();
     if (libraryUI) libraryUI.render();

@@ -85,6 +85,42 @@ def preflight():
     return False
 
 
+def self_check():
+    """自检：不动任何数据，生成一份 Word 和 PDF，确认环境正常。
+
+    用法： python run.py --selfcheck
+    """
+    import bootstrap
+
+    ok, note = bootstrap.ensure_dependencies()
+    if not ok:
+        print("依赖不可用：%s" % note)
+        return 1
+
+    import docx_gen
+    import pdf_gen
+
+    out = os.path.join(HERE, "自检输出")
+    os.makedirs(out, exist_ok=True)
+    payload = {
+        "settings": {"period": "2026年7月", "unitName": "自检单位",
+                     "projectCode": "0000-000000", "projectName": "自检项目",
+                     "workContent": "自检工作"},
+        "students": [{"id": "t1", "studentId": "2024000000001", "name": "自检同学",
+                      "college": "计算机学院", "rate": "100", "hours": "10",
+                      "amount": "1000", "manual": True, "checked": True,
+                      "identityName": "本科生"}],
+        "projectName": "自检项目",
+    }
+    docx_path = docx_gen.generate_docx(payload, os.path.join(out, "自检_明细表.docx"))["path"]
+    pdf_gen.generate_pdf(docx_path, os.path.join(out, "自检_明细表.pdf"))
+    print("\n自检通过，环境没问题。已生成：")
+    for name in sorted(os.listdir(out)):
+        print("   %s" % os.path.join("自检输出", name))
+    print("\n（自检不会改动你的任何数据。）")
+    return 0
+
+
 def main():
     _force_utf8_output()
 
@@ -94,7 +130,12 @@ def main():
                         help="指定端口，默认从 8765 起自动寻找可用端口")
     parser.add_argument("--no-open", action="store_true",
                         help="不要自动打开浏览器")
+    parser.add_argument("--selfcheck", action="store_true",
+                        help="自检：生成一份样例 Word/PDF，确认环境正常（不改动数据）")
     args = parser.parse_args()
+
+    if args.selfcheck:
+        return self_check()
 
     if not preflight():
         return 1

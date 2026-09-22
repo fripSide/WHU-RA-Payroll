@@ -14,7 +14,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.text.paragraph import CT_P
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DOCX = os.path.join(HERE, "助研费用发放说明(1).docx")
+DEFAULT_DOCX = os.path.join(HERE, "templates", "武汉大学学生劳务费发放明细表（科研经费）.docx")
 
 # 表格行号（按模板固定；改了模板结构要同步这里）
 ROW_HEAD_1 = 0    # 发放单位 / 财务项目编号 / 兼职时段
@@ -91,12 +91,13 @@ def batch_fill(students, field, mapping):
     所以界面上看到的金额一定等于导出文件里的金额。
 
     field:   "hours" / "rate" / "amount"，决定值写到哪个字段。
-    mapping: {studentId: 值}，没出现在里面的学生保持原样。
+    mapping: {id: 值}，使用稳定人员 ID，允许学号暂时为空。
     """
     result = []
     for student in students:
         sid = student.get("studentId")
-        if sid not in mapping:
+        key = student.get("id") or sid
+        if key not in mapping:
             result.append({
                 "id": student.get("id"),
                 "studentId": sid,
@@ -107,7 +108,7 @@ def batch_fill(students, field, mapping):
             })
             continue
 
-        value = mapping[sid]
+        value = mapping[key]
         probe = dict(student)
         probe[field] = value
         if field == "amount":
@@ -461,6 +462,52 @@ def _auto_note(settings, count, lead_name):
     return "".join(parts)
 
 
+def inspect_template(document):
+    """Locate detail headers/total by content, supporting both bundled layouts."""
+    if not document.tables:
+        raise ValueError("模板里没有表格")
+    rows = document.tables[0]._tbl.findall(qn("w:tr"))
+    header = None
+    for index, row in enumerate(rows):
+        cells = row.findall(qn("w:tc"))
+        labels = [re.sub(r"\s+", "", cell_text(cell)) for cell in cells]
+        if "姓名" in labels and "学号" in labels and any("实发金额" in label for label in labels):
+            header = index
+            columns = labels
+            break
+    if header is None or len(columns) not in (5, 7):
+        raise ValueError("模板须包含姓名、学号、实发金额，以及科研表的事由列或非科研表的学院/标准/工时列")
+    total = next((i for i in range(header + 1, len(rows))
+                  if re.sub(r"\s+", "", cell_text(rows[i].findall(qn('w:tc'))[0])) == "合计"), None)
+    if total is None or total <= header + 1:
+        raise ValueError("模板需要至少一行人员明细和一行合计")
+    if len(rows[0].findall(qn("w:tc"))) < 6 or len(rows[1].findall(qn("w:tc"))) < 2:
+        raise ValueError("模板表头须包含发放单位、财务项目编号、时段和项目名称")
+    return {"rows": rows, "header": header, "first": header + 1, "total": total,
+            "research": len(columns) == 5}
+
+
+def extract_template(document):
+    layout = inspect_template(document)
+    rows = layout["rows"]
+    head = [cell_text(c) for c in rows[0].findall(qn("w:tc"))]
+    settings = dict(unitName=head[1], projectCode=head[3], period=head[5],
+                    projectName=cell_text(rows[1].findall(qn("w:tc"))[1]),
+                    projectType="research" if layout["research"] else "non_research")
+    students = []
+    for row in rows[layout["first"]:layout["total"]]:
+        cells = [cell_text(c) for c in row.findall(qn("w:tc"))]
+        if not cells[1] and not cells[2]:
+            continue
+        data = dict(name=cells[1], studentId=cells[2], checked=True, manual=True)
+        if layout["research"]:
+            data.update(amount=cells[3], reason=cells[4])
+        else:
+            data.update(college=cells[3], rate=cells[4], hours=cells[5], amount=cells[6])
+        students.append(data)
+    return settings, students
+
+
 def generate_docx(payload, out_path, template_path=None):
     """按 payload 生成明细表 docx。
 
@@ -473,13 +520,10 @@ def generate_docx(payload, out_path, template_path=None):
         raise FileNotFoundError("找不到明细表模板：%s" % source)
 
     doc = Document(source)
-    if not doc.tables:
-        raise ValueError("模板里没有表格")
-
+    layout = inspect_template(doc)
     table = doc.tables[0]._tbl
-    rows = table.findall(qn("w:tr"))
-    if len(rows) <= ROW_TOTAL:
-        raise ValueError("模板表格结构不符合预期（行数不足）")
+    rows = layout["rows"]
+    first, total_index = layout["first"], layout["total"]
 
     settings = payload.get("settings") or {}
     students = [s for s in (payload.get("students") or []) if s.get("checked", True)]
@@ -497,21 +541,20 @@ def generate_docx(payload, out_path, template_path=None):
 
     # ---- 2. 发放事项说明 ------------------------------------------------
     # 模板该段落自带字体（Times New Roman + 等线 + sz20），直接沿用
-    note_cell = rows[ROW_NOTE].findall(qn("w:tc"))[0]
-    note_paras = note_cell.findall(qn("w:p"))
-    if len(note_paras) >= 2:
-        replace_paragraph_text(note_paras[1], build_note(settings, students))
-    elif note_paras:
-        replace_paragraph_text(note_paras[0], build_note(settings, students))
+    for row in rows[2:layout["header"]]:
+        note_cell = row.findall(qn("w:tc"))[0]
+        if "发放事项说明" in re.sub(r"\s+", "", cell_text(note_cell)):
+            note_paras = note_cell.findall(qn("w:p"))
+            if len(note_paras) >= 2:
+                replace_paragraph_text(note_paras[1], build_note(settings, students))
 
     # ---- 3. 明细行 ------------------------------------------------------
-    template_row = rows[ROW_FIRST_DETAIL]
-    total_row = rows[ROW_TOTAL]
+    template_row = rows[first]
+    total_row = rows[total_index]
 
     # 模板里只有前两行填了学生，其余明细行是空的（没有 run）。
     # 记下这两行的字体样板，空行就照它们来，保证字体和模板一致。
-    style_rows = [rows[ROW_FIRST_DETAIL], rows[ROW_FIRST_DETAIL + 1]] \
-        if ROW_FIRST_DETAIL + 1 < len(rows) else [rows[ROW_FIRST_DETAIL]]
+    style_rows = [copy.deepcopy(rows[first])]
 
     def style_cell(source_row, col):
         """从样板行里取第 col 个单元格，作为字体来源。"""
@@ -519,7 +562,7 @@ def generate_docx(payload, out_path, template_path=None):
         return cells[col] if col < len(cells) else None
 
     # 先补齐到足够行数（模板只有 10 个明细行位置）
-    available = ROW_TOTAL - ROW_FIRST_DETAIL
+    available = total_index - first
     if len(students) > available:
         anchor = template_row
         for _ in range(len(students) - available):
@@ -527,10 +570,10 @@ def generate_docx(payload, out_path, template_path=None):
             anchor.addnext(clone)
             anchor = clone
         rows = table.findall(qn("w:tr"))
-        total_row = rows[ROW_TOTAL + (len(students) - available)]
+        total_row = rows[total_index + (len(students) - available)]
 
     # 刷新明细行内容
-    detail_rows = rows[ROW_FIRST_DETAIL:rows.index(total_row) if total_row in rows else ROW_TOTAL]
+    detail_rows = rows[first:rows.index(total_row)]
     total_amount = 0.0
     for index, row in enumerate(detail_rows):
         cells = row.findall(qn("w:tc"))
@@ -551,7 +594,13 @@ def generate_docx(payload, out_path, template_path=None):
                 fmt_number(student.get("hours"), blank_zero=True),
                 fmt_number(amount, blank_zero=True),
             ]
-            for col, value in zip(range(7), values):
+            if layout["research"]:
+                values = [str(index + 1), student.get("name", ""), student.get("studentId", ""),
+                          fmt_number(amount, blank_zero=True), student.get("reason") or build_note(settings, students)]
+            height = row.find("w:trPr/w:trHeight", namespaces=row.nsmap)
+            if height is not None:
+                height.set(qn("w:hRule"), "atLeast")
+            for col, value in enumerate(values):
                 if col < len(cells):
                     set_cell_text(cells[col], value, fallback_cell=style_cell(donor, col))
                     for para in cells[col].findall(qn("w:p")):
@@ -577,10 +626,11 @@ def generate_docx(payload, out_path, template_path=None):
         set_cell_borders_single(cell, "4")
         set_cell_shading(cell, "F2F2F2")
 
-    # ---- 5. 备注 --------------------------------------------------------
-    foot_cell = rows[-1].findall(qn("w:tc"))[0]
-    if not cell_text(foot_cell):
-        set_cell_text(foot_cell, "注意：本发放表须按规定流程审批。")
+    # Repeat the form's header on additional pages; keep the supplied approval text.
+    for row in rows[:layout["header"] + 1]:
+        props = row.get_or_add_trPr()
+        if props.find(qn("w:tblHeader")) is None:
+            props.append(OxmlElement("w:tblHeader"))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     doc.save(out_path)

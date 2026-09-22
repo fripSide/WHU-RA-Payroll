@@ -355,6 +355,29 @@ def write_roster_xls(students, out_path, sheet_name="Sheet1"):
             "checked": sum(1 for s in ordered if s.get("checked", True))}
 
 
+def write_submission_xls(students, out_path):
+    """Three-column upload form; only checked people, same headers as the supplied XLS."""
+    import xlrd
+    import xlwt
+    template = os.path.join(HERE, "templates", "助研费用发放列表.xls")
+    source = xlrd.open_workbook(template)
+    headers = source.sheet_by_index(0).row_values(0)
+    if headers != ["学号", "姓名", "助研津贴(三兼费)"]:
+        raise ValueError("系统上传 Excel 模板须为学号、姓名、助研津贴三列")
+    book = xlwt.Workbook(encoding="utf-8")
+    sheet = book.add_sheet(source.sheet_names()[0])
+    for col, value in enumerate(headers):
+        sheet.write(0, col, value)
+        sheet.col(col).width = 256 * (22 if col != 1 else 16)
+    ordered = sorted([s for s in students if s.get("checked", True)], key=sort_key_by_id)
+    for index, person in enumerate(ordered, 1):
+        sheet.write(index, 0, str(person.get("studentId") or ""))
+        sheet.write(index, 1, str(person.get("name") or ""))
+        sheet.write(index, 2, _to_number(person.get("amount")))
+    book.save(out_path)
+    return {"path": out_path, "students": len(ordered)}
+
+
 def _to_number(value):
     try:
         return float(str(value).replace(",", "").strip() or 0)

@@ -14,7 +14,8 @@ import sys
 import argparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VENDOR = os.path.join(HERE, "vendor", "pylib")
+VENDOR = os.path.abspath(os.environ.get("BAOXIAO_VENDOR_DIR")
+                         or os.path.join(HERE, "vendor", "pylib"))
 
 MIN_PYTHON = (3, 8)
 
@@ -24,6 +25,7 @@ DEPENDENCIES = [
     ("xlrd", "xlrd"),
     ("xlwt", "xlwt"),
     ("openpyxl", "openpyxl"),
+    ("reportlab", "reportlab"),
 ]
 
 

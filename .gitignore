@@ -2,3 +2,6 @@ __pycache__
 .DS_Store
 output
 vendor
+app/*.sqlite3*
+tmp/
+.pytest_cache/

@@ -8,16 +8,25 @@ import sys
 import json
 import shutil
 import socket
-import tempfile
 import threading
 import webbrowser
 import mimetypes
 import urllib.parse
+import math
+import uuid
+from decimal import Decimal, ROUND_HALF_UP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "vendor", "pylib"))
+# 依赖目录可用 BAOXIAO_VENDOR_DIR 覆盖；指向别处时不再加载 vendor/pylib，
+# 免得一个残缺的同名目录把可用的依赖挡在后面。
+VENDOR_DIR = os.path.abspath(os.environ.get("BAOXIAO_VENDOR_DIR")
+                             or os.path.join(HERE, "vendor", "pylib"))
+sys.path.insert(0, VENDOR_DIR)
+if os.path.abspath(os.path.join(HERE, "vendor", "pylib")) != VENDOR_DIR:
+    broken = os.path.join(HERE, "vendor", "pylib")
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != broken]
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -25,10 +34,26 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import store            # noqa: E402
 import docx_gen         # noqa: E402
 import xls_gen          # noqa: E402
+import pdf_gen          # noqa: E402
+import people_store     # noqa: E402
 
 WEB_DIR = os.path.join(HERE, "web")
 OUTPUT_DIR = store.OUTPUT_DIR
 MAX_UPLOAD = 20 * 1024 * 1024
+EXPORT_LOCK = threading.Lock()
+
+
+def staging_dir(prefix):
+    """在输出目录下开一个临时暂存目录。
+
+    原先用 tempfile.mkdtemp()，它会把目录权限设成 0o700；在受限账户或
+    受管环境里这个 ACL 反而会让子进程写不进去。放在输出目录下既稳妥，
+    清理也可靠（同盘 os.replace 才是原子改名）。
+    """
+    store._ensure_dirs()
+    path = os.path.join(OUTPUT_DIR, "%s%s" % (prefix, uuid.uuid4().hex[:8]))
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def json_response(handler, data, status=200):
@@ -187,6 +212,12 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {"ok": True})
             if route == "/api/settings":
                 return json_response(self, store.load_settings())
+            if route == "/api/library":
+                state = store.load_settings()
+                return json_response(self, dict(state["library"], revision=state["revision"], apiVersion=1))
+            if route == "/api/library/backup":
+                store.load_settings()
+                return json_response(self, people_store.backup(store.DATABASE_PATH))
             if route == "/api/templates":
                 return json_response(self, {"templates": store.list_templates()})
             if route == "/api/export/download":
@@ -212,7 +243,13 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {"ok": True,
                                             "settings": store.save_settings(parse_json_body(self))})
             if route == "/api/settings/reset":
-                return json_response(self, {"ok": True, "workspace": store.reset_settings()})
+                return json_response(self, {"ok": True, "workspace": store.reset_settings(parse_json_body(self).get("revision"))})
+            actions = {"/api/people/save": "person.save", "/api/people/delete": "person.delete",
+                       "/api/groups/save": "group.save", "/api/groups/delete": "group.delete",
+                       "/api/library/import": "library.import"}
+            if route in actions:
+                state = store.library_action(actions[route], parse_json_body(self))
+                return json_response(self, {"ok": True, "workspace": state})
             if route == "/api/templates/save":
                 payload = parse_json_body(self)
                 info = store.save_template((payload.get("id") or "").strip(), payload)
@@ -241,6 +278,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         except json.JSONDecodeError as exc:
             return json_response(self, {"error": "请求数据不是合法 JSON：%s" % exc}, 400)
+        except people_store.ConflictError as exc:
+            return json_response(self, {"error": str(exc)}, 409)
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
         except FileNotFoundError as exc:
             return json_response(self, {"error": str(exc)}, 404)
         except Exception as exc:  # noqa: BLE001
@@ -255,7 +296,7 @@ class Handler(BaseHTTPRequestHandler):
         if not item:
             return json_response(self, {"error": "没有收到文件"}, 400)
         suffix = os.path.splitext(item["filename"])[1] or ".dat"
-        tmp_dir = tempfile.mkdtemp(prefix="roster-")
+        tmp_dir = staging_dir("roster-")
         tmp_path = os.path.join(tmp_dir, "upload" + suffix)
         with open(tmp_path, "wb") as fh:
             fh.write(item["content"])
@@ -290,18 +331,26 @@ class Handler(BaseHTTPRequestHandler):
                     if s.get("checked", True)]
         if not students:
             return json_response(self, {"error": "还没有勾选学生"}, 400)
+        keys = [s.get("id") or s.get("studentId") for s in students]
+        if not all(keys) or len(set(keys)) != len(keys):
+            raise ValueError("每位人员需要唯一 ID")
 
         # ---- 总额均摊：填一个总额，平均分给勾选的人 ----
         if field == "amount" and payload.get("total") not in (None, ""):
             total = docx_gen.to_money(payload.get("total"))
-            if total <= 0:
+            if not math.isfinite(total) or total <= 0:
                 return json_response(self, {"error": "总额要大于 0"}, 400)
-            unit = docx_gen.fmt_number(total / len(students))
-            mapping = {s.get("studentId"): unit for s in students}
+            cents = int((Decimal(str(total)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            base, remainder = divmod(cents, len(students))
+            total = cents / 100
+            unit = docx_gen.fmt_number(base / 100)
+            mapping = {key: docx_gen.fmt_number((base + (index < remainder)) / 100)
+                       for index, key in enumerate(keys)}
             items = docx_gen.batch_fill(students, "amount", mapping)
             return json_response(self, {
                 "ok": True, "field": field, "mode": "total",
                 "count": len(students), "unit": unit,
+                "remainderCount": remainder,
                 "total": docx_gen.fmt_number(total),
                 "keptCount": 0,
                 "filledAmount": docx_gen.fmt_number(total),
@@ -322,7 +371,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 number = float(text.replace(",", ""))
             except ValueError:
-                continue          # 非数值直接跳过，不打断整批
+                raise ValueError("批量填入中有非数字内容，请修正后重试")
+            if not math.isfinite(number) or number < 0:
+                raise ValueError("批量填入只接受有限的非负数")
             values.append(docx_gen.fmt_number(number))
 
         if not values:
@@ -334,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
 
         mapping = {}
         for student, value in zip(students, values):
-            mapping[student.get("studentId")] = value
+            mapping[student.get("id") or student.get("studentId")] = value
 
         items = docx_gen.batch_fill(students, field, mapping)
 
@@ -354,13 +405,13 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _docx_template_upload(self):
-        _, files = parse_multipart(self)
+        fields, files = parse_multipart(self)
         item = files.get("file")
         if not item:
             return json_response(self, {"error": "没有收到文件"}, 400)
         if not item["filename"].lower().endswith(".docx"):
             return json_response(self, {"error": "请上传 .docx 文件"}, 400)
-        tmp_dir = tempfile.mkdtemp(prefix="docxtpl-")
+        tmp_dir = staging_dir("docxtpl-")
         tmp_path = os.path.join(tmp_dir, "t.docx")
         with open(tmp_path, "wb") as fh:
             fh.write(item["content"])
@@ -369,8 +420,11 @@ class Handler(BaseHTTPRequestHandler):
             from docx import Document
             probe = Document(tmp_path)
             table_count = len(probe.tables)
-            settings, students = _extract_from_docx(probe)
-            saved = store.ensure_docx_template(tmp_path, item["filename"])
+            settings, students = docx_gen.extract_template(probe)
+            kind = store.normalize_project_type(fields.get("projectType"))
+            if settings["projectType"] != kind:
+                raise ValueError("上传底板的列结构与所选科研/非科研类型不一致")
+            saved = store.ensure_docx_template(tmp_path, item["filename"], kind)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         return json_response(self, {
@@ -382,39 +436,61 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _export(self):
+        with EXPORT_LOCK:
+            return self._export_files()
+
+    def _export_files(self):
         payload = parse_json_body(self)
         settings = payload.get("settings") or {}
         students = payload.get("students") or []
         kinds = payload.get("kinds") or ["docx", "xls"]
         label = store.safe_filename(payload.get("label") or "", "").strip("_")
-        template_path = store.current_docx_template()
+        template_path = store.current_docx_template(settings.get("projectType"))
+        if not isinstance(kinds, list) or not kinds or set(kinds) - {"docx", "pdf", "xls", "submission"}:
+            raise ValueError("导出类型可选 docx、pdf、xls、submission")
+        picked = [s for s in students if s.get("checked", True)]
+        if not picked:
+            raise ValueError("请先勾选本次发放人员")
+        if any(not str(s.get("name") or "").strip() for s in picked):
+            raise ValueError("本次发放人员中有人未填写姓名")
+        if "submission" in kinds and any(not str(s.get("studentId") or "").strip() for s in picked):
+            raise ValueError("系统上传名单要求每位人员填写学号")
+        for s in picked:
+            for key in ("rate", "hours", "amount"):
+                value = s.get(key)
+                if value not in (None, ""):
+                    try:
+                        number = float(str(value).replace(",", ""))
+                    except (ValueError, TypeError):
+                        raise ValueError("标准、工时和金额必须是数字")
+                    if not math.isfinite(number) or number < 0:
+                        raise ValueError("标准、工时和金额必须为有限的非负数")
 
         results = {}
-        if "docx" in kinds:
-            out = store.next_output_path("docx", settings, label)
-            info = docx_gen.generate_docx(
-                {"settings": settings, "students": students},
-                out, template_path=template_path)
-            store.save_settings({"settings": settings,
-                                 "batch": payload.get("batch") or {},
-                                 "feePresets": payload.get("feePresets"),
-                                 "periodPresets": payload.get("periodPresets"),
-                                 "students": students})
-            results["docx"] = {"file": os.path.basename(info["path"]),
-                               "path": info["path"],
-                               "students": info["students"],
-                               "total": info["total"]}
-        if "xls" in kinds:
-            roster = _collect_roster(students)
-            out = store.next_output_path("xls", settings, label)
-            info = xls_gen.write_roster_xls(roster, out)
-            results["xls"] = {"file": os.path.basename(info["path"]),
-                              "path": info["path"],
-                              "students": info["students"]}
-        if not results:
-            return json_response(self, {"error": "没有可导出的类型"}, 400)
-        return json_response(self, {"ok": True, "results": results,
-                                    "outputDir": OUTPUT_DIR})
+        staging = staging_dir("export-")
+        try:
+            generated = {}
+            out = os.path.join(staging, "detail.docx")
+            if "docx" in kinds or "pdf" in kinds:
+                info = docx_gen.generate_docx(
+                    {"settings": settings, "students": students}, out, template_path=template_path)
+                if "docx" in kinds:
+                    generated["docx"] = info
+                if "pdf" in kinds:
+                    pdf = pdf_gen.generate_pdf(out, os.path.join(staging, "detail.pdf"))
+                    generated["pdf"] = dict(info, path=pdf["path"])
+            if "xls" in kinds:
+                generated["xls"] = xls_gen.write_roster_xls(_collect_roster(students), os.path.join(staging, "roster.xls"))
+            if "submission" in kinds:
+                generated["submission"] = xls_gen.write_submission_xls(_collect_roster(picked), os.path.join(staging, "submission.xls"))
+            for kind, info in generated.items():
+                ext = "xls" if kind == "submission" else kind
+                out = store.next_output_path(ext, settings, (label + "_系统上传") if kind == "submission" else label)
+                os.replace(info["path"], out)
+                results[kind] = dict(info, path=out, file=os.path.basename(out))
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        return json_response(self, {"ok": True, "results": results, "outputDir": OUTPUT_DIR})
 
     # ------------------------------------------------------------------ main
     def do_OPTIONS(self):

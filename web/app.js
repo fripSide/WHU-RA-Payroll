@@ -34,12 +34,12 @@
   var DEFAULT_COLLEGE = "国家网络安全学院";
 
   // 表格列的录入属性
-  var FIELDS = ["studentId", "name", "college", "rate", "hours", "amount"];
+  var FIELDS = ["studentId", "name", "college", "rate", "hours", "amount", "reason"];
   var NUMERIC_FIELDS = { rate: 1, hours: 1, amount: 1 };
 
   var state = {
     step: 1,
-    settings: { unitName: "", projectCode: "", period: "", projectName: "", note: "" },
+    settings: { projectType: "research", unitName: "", projectCode: "", period: "", projectName: "", note: "" },
     batch: { college: "", rate: "100", hours: "10" },
     feePresets: DEFAULT_FEE_PRESETS.slice(),
     periodPresets: buildPeriodPresets(),
@@ -50,9 +50,13 @@
     tplId: "",
     pending: null,
     pasteTarget: null,
+    library: {groups: [], people: []}, revision: null, writeQueue: Promise.resolve(),
+    editSerial: 0, saving: false, conflict: false,
     saveTimer: null
   };
 
+  var libraryUI;
+  var DRAFT_KEY = "whu-payroll-draft-v1";
   var seq = 1;
   var rowCache = new Map();
 
@@ -61,7 +65,7 @@
   function $$(sel, root) {
     return Array.prototype.slice.call((root || document).querySelectorAll(sel));
   }
-  function uid() { return "s" + (seq++) + "_" + Date.now().toString(36); }
+  function uid() { return window.crypto && crypto.randomUUID ? crypto.randomUUID() : "s" + (seq++) + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
   function toNum(value) {
     if (value === null || value === undefined) return NaN;
@@ -131,6 +135,7 @@
       hours: seed.hours || (state.batch.hours === "0" ? "" : (state.batch.hours || "")),
       amount: seed.amount || "",
       manual: !!seed.manual,
+      reason: seed.reason || "", groupIds: (seed.groupIds || []).slice(), customFields: seed.customFields || {},
       checked: seed.checked !== false
     };
   }
@@ -143,7 +148,7 @@
     var student = newStudent({
       id: raw.id, studentId: raw.studentId, name: raw.name, college: raw.college,
       rate: raw.rate, hours: raw.hours, amount: amount, manual: manual,
-      checked: raw.checked
+      checked: raw.checked, reason: raw.reason, groupIds: raw.groupIds, customFields: raw.customFields
     });
     // 本地存过的标记优先（用户可能已经知道这是默认值）
     if (raw.collegeAuto !== undefined && raw.collegeAuto !== null) {
@@ -229,6 +234,7 @@
 
   function payload() {
     return {
+      revision: state.revision,
       step: state.step,
       settings: state.settings,
       batch: state.batch,
@@ -238,30 +244,107 @@
     };
   }
 
+  function rememberDraft() {
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(payload())); } catch (e) { /* server save remains authoritative */ }
+  }
+
+  function acceptWorkspace(ws, replaceRows) {
+    state.revision = ws.revision;
+    state.library = ws.library || state.library;
+    if (replaceRows) state.students = (ws.students || []).map(normalizeStudent);
+    else {
+      // Import may reuse an existing person with the same student ID.
+      state.students.forEach(function (p) {
+        var saved = (ws.students || []).find(function (x) { return x.id === p.id || (p.studentId && x.studentId === p.studentId); });
+        if (saved) p.id = saved.id;
+      });
+    }
+    if (libraryUI) libraryUI.render();
+  }
+
+  function queueWrite(path, body, replaceRows) {
+    var serial;
+    var job = state.writeQueue.then(function () {
+      if (state.conflict) throw new Error("数据已在其他页面修改，请刷新后继续");
+      if (state.revision === null) throw new Error("本地数据仍在加载，请稍后重试");
+      serial = state.editSerial;
+      state.saving = true;
+      setSaveState("保存中…");
+      return postJSON(path, Object.assign({}, typeof body === "function" ? body() : body, {revision: state.revision}));
+    }).then(function (data) {
+      acceptWorkspace(data.workspace || data.settings, replaceRows);
+      state.saving = false;
+      if (serial === state.editSerial) {
+        try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+      } else rememberDraft();
+      setSaveState("已保存到本机", "ok");
+      return data;
+    }).catch(function (err) {
+      state.saving = false;
+      if (err.status === 409) state.conflict = true;
+      setSaveState("未保存，请重试", "err");
+      toast(err.message, "err");
+      throw err;
+    });
+    state.writeQueue = job.catch(function () {});
+    return job;
+  }
+
   function scheduleSave() {
+    state.editSerial++;
+    rememberDraft();
     if (state.saveTimer) clearTimeout(state.saveTimer);
     setSaveState("编辑中…");
-    state.saveTimer = setTimeout(function () {
-      postJSON("/api/settings", payload()).then(function () {
-        setSaveState("已保存 " + new Date().toLocaleTimeString("zh-CN", { hour12: false }), "ok");
-      }).catch(function (err) {
-        setSaveState("保存失败：" + err.message, "err");
-      });
-    }, 450);
+    state.saveTimer = setTimeout(function () { saveNow(); }, 350);
   }
 
   function saveNow() {
     if (state.saveTimer) clearTimeout(state.saveTimer);
-    return postJSON("/api/settings", payload()).then(function () {
-      setSaveState("已保存", "ok");
-    }).catch(function () { /* 忽略 */ });
+    state.saveTimer = null;
+    rememberDraft();
+    return queueWrite("/api/settings", payload, false);
+  }
+
+  function addFromLibrary(people) {
+    people.forEach(function (p) {
+      var existing = state.students.find(function (s) { return s.id === p.id; });
+      if (existing) existing.checked = true;
+      else state.students.push(normalizeStudent(Object.assign({}, p, {checked: true})));
+    });
+    renderAll();
+    return saveNow().then(function () { toast("已加入本次发放，可在第 2 步继续编辑", "ok"); });
+  }
+
+  function removeFromBatch(ids) {
+    // Commit edits before removing a row so newly entered people stay in the library.
+    return saveNow().then(function () {
+      state.students = state.students.filter(function (p) { return ids.indexOf(p.id) < 0; });
+      renderAll();
+      return saveNow();
+    });
+  }
+
+  function restoreDraft() {
+    var draft;
+    try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY)); } catch (e) { return; }
+    if (!draft) return;
+    state.settings = Object.assign({}, state.settings, draft.settings || {});
+    state.batch = Object.assign({}, state.batch, draft.batch || {});
+    state.students = (draft.students || []).map(function (p) {
+      var existing = findMatch(p, state.library.people);
+      return normalizeStudent(Object.assign({}, p, {id: existing ? existing.id : uid()}));
+    });
+    if (draft.feePresets) state.feePresets = draft.feePresets;
+    if (draft.periodPresets) state.periodPresets = draft.periodPresets;
+    $("#draftBanner").hidden = true;
+    renderAll(); scheduleSave();
   }
 
   // ============================================================ 接口
   function api(path, options) {
     return fetch(path, options).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
-        if (!res.ok || data.error) throw new Error(data.error || ("请求失败 " + res.status));
+        if (!res.ok || data.error) { var error = new Error(data.error || ("请求失败 " + res.status)); error.status = res.status; throw error; }
         return data;
       });
     });
@@ -338,7 +421,8 @@
       '<td class="col-rate"><input type="number" class="num" data-f="rate" min="0" step="1" placeholder="0"></td>' +
       '<td class="col-hours"><input type="number" class="num" data-f="hours" min="0" step="1" placeholder="0"></td>' +
       '<td class="col-amount"><input type="number" class="num" data-f="amount" min="0" step="100" placeholder="自动"></td>' +
-      '<td class="col-act"><button class="row-del" type="button" title="删除这一行">×</button></td>';
+      '<td class="col-reason"><input type="text" data-f="reason" placeholder="留空使用发放说明"></td>' +
+      '<td class="col-act"><button class="row-del" type="button" title="移出本次（保留人员库）">×</button></td>';
     return tr;
   }
 
@@ -454,6 +538,7 @@
 
   // ============================================================ 侧栏渲染
   function renderSettings() {
+    document.body.classList.toggle("project-nonresearch", state.settings.projectType === "non_research");
     $$("[data-setting]").forEach(function (el) {
       if (document.activeElement === el) return;
       var key = el.dataset.setting;
@@ -782,30 +867,25 @@
   }
 
   // ============================================================ 导入
+  function findMatch(person, pool) {
+    var exact = pool.find(function (p) { return person.id && p.id === person.id; });
+    if (exact) return exact;
+    if (person.studentId) return pool.find(function (p) { return p.studentId === person.studentId; });
+    var names = pool.filter(function (p) { return !p.studentId && person.name && p.name === person.name; });
+    return names.length === 1 ? names[0] : null;
+  }
+
   function mergeStudents(incoming, merge) {
     var added = 0, updated = 0;
     incoming.forEach(function (raw) {
-      var fresh = normalizeStudent(raw);
-      var hit = merge ? state.students.filter(function (x) {
-        return (fresh.studentId && x.studentId === fresh.studentId) ||
-               (fresh.name && x.name === fresh.name);
-      })[0] : null;
-
-      if (hit) {
-        hit.studentId = fresh.studentId || hit.studentId;
-        hit.name = fresh.name || hit.name;
-        hit.college = fresh.college || hit.college || DEFAULT_COLLEGE;
-        if (fresh.rate) hit.rate = fresh.rate;
-        if (fresh.hours) hit.hours = fresh.hours;
-        if (fresh.amount) { hit.amount = fresh.amount; hit.manual = true; }
-        hit.checked = true;
-        updated++;
-      } else {
-        state.students.push(fresh);
-        added++;
-      }
+      var hit = merge ? findMatch(raw, state.students) : null;
+      var saved = findMatch(raw, state.library.people);
+      if (!hit && saved) hit = state.students.find(function (p) { return p.id === saved.id; });
+      var fresh = normalizeStudent(Object.assign({}, saved || {}, raw, {id: hit ? hit.id : (saved ? saved.id : uid())}));
+      if (hit) { Object.assign(hit, fresh); updated++; }
+      else { state.students.push(fresh); added++; }
     });
-    return { added: added, updated: updated };
+    return {added:added, updated:updated};
   }
 
   function showPreview(payloadData) {
@@ -820,9 +900,7 @@
     $("#previewList").innerHTML =
       '<table><thead><tr><th>学号</th><th>姓名</th><th>津贴/金额</th><th>状态</th></tr></thead><tbody>' +
       list.slice(0, 200).map(function (s) {
-        var hit = state.students.filter(function (x) {
-          return (s.studentId && x.studentId === s.studentId) || (s.name && x.name === s.name);
-        })[0];
+        var hit = findMatch(s, state.students) || findMatch(s, state.library.people);
         return '<tr class="' + (hit ? "is-update" : "") + '">' +
           '<td class="mono">' + esc(s.studentId) + "</td>" +
           "<td>" + esc(s.name) + "</td>" +
@@ -874,14 +952,12 @@
       if (tpl.feePresets && tpl.feePresets.length) state.feePresets = tpl.feePresets;
       if (tpl.periodPresets && tpl.periodPresets.length) state.periodPresets = tpl.periodPresets;
       if (tpl.students && tpl.students.length) {
-        state.students = tpl.students.map(normalizeStudent);
-        rowCache.clear();
-        $("#tbody").innerHTML = "";
+        mergeStudents(tpl.students, true);
       } else {
         state.students.forEach(function (s) {
-          if (state.batch.college) s.college = state.batch.college;
-          if (state.batch.rate) s.rate = state.batch.rate;
-          if (state.batch.hours && state.batch.hours !== "0") s.hours = state.batch.hours;
+          if (!s.college && state.batch.college) s.college = state.batch.college;
+          if (!s.rate && state.batch.rate) s.rate = state.batch.rate;
+          if (!s.hours && state.batch.hours) s.hours = state.batch.hours;
         });
       }
       renderAll(); saveNow();
@@ -935,24 +1011,12 @@
   function uploadDocx(file) {
     var form = new FormData();
     form.append("file", file);
+    form.append("projectType", state.settings.projectType);
     $("#btnUploadDocx").disabled = true;
     api("/api/template/docx", { method: "POST", body: form }).then(function (data) {
       var s = data.settings || {};
       Object.keys(s).forEach(function (k) { if (s[k]) state.settings[k] = s[k]; });
-      var added = 0;
-      (data.students || []).forEach(function (raw) {
-        var hit = state.students.filter(function (x) {
-          return (raw.studentId && x.studentId === raw.studentId) ||
-                 (raw.name && x.name === raw.name);
-        })[0];
-        if (hit) {
-          ["college", "rate", "hours"].forEach(function (k) { if (raw[k]) hit[k] = raw[k]; });
-          if (raw.amount && !hit.manual) { hit.amount = raw.amount; hit.manual = true; }
-        } else {
-          state.students.push(normalizeStudent(raw));
-          added++;
-        }
-      });
+      var added = mergeStudents(data.students || [], true).added;
       renderAll(); saveNow();
       toast("已换用 " + data.file + " 作底板" + (added ? "，补充 " + added + " 位学生" : ""), "ok");
     }).catch(function (err) {
@@ -970,22 +1034,22 @@
       toast("请先在第 2 步勾选学生", "warn");
       return gotoStep(2);
     }
-    if (kinds.indexOf("docx") >= 0) {
+    if (kinds.indexOf("docx") >= 0 || kinds.indexOf("pdf") >= 0 || kinds.indexOf("submission") >= 0) {
       var noName = picked.filter(function (s) { return !String(s.name).trim(); });
       if (noName.length) {
         return toast("有 " + noName.length + " 位学生没填姓名，无法生成明细表", "err");
       }
     }
 
-    var cards = ["#btnExportDocx", "#btnExportXls", "#btnExportBoth"];
+    var cards = ["#btnExportDocx", "#btnExportXls", "#btnExportPdf", "#btnExportSubmit", "#btnExportBoth"];
     cards.forEach(function (sel) { $(sel).disabled = true; });
     $$(".result").forEach(function (n) { n.remove(); });
 
-    postJSON("/api/export", {
+    saveNow().then(function () { return postJSON("/api/export", {
       settings: state.settings, batch: state.batch,
       feePresets: state.feePresets, periodPresets: state.periodPresets,
       students: state.students, kinds: kinds, label: $("#exportLabel").value.trim()
-    }).then(function (data) {
+    }); }).then(function (data) {
       var results = data.results || {};
       var html = [];
       if (results.docx) {
@@ -996,7 +1060,12 @@
         html.push(resultRow("Excel 名单", results.xls.file, results.xls.path,
           results.xls.students + " 人"));
       }
+      if (results.pdf) html.push(resultRow("PDF 明细表", results.pdf.file, results.pdf.path, results.pdf.students + " 人"));
+      if (results.submission) html.push(resultRow("系统上传 Excel", results.submission.file, results.submission.path, results.submission.students + " 人 · 三列上传格式"));
       $("#results").innerHTML = html.join("");
+      Object.keys(results).forEach(function (kind, index) {
+        setTimeout(function () { var a = document.createElement("a"); a.href = "/api/export/download?file=" + encodeURIComponent(results[kind].file); a.download = results[kind].file; a.click(); }, index * 250);
+      });
       setSaveState("已导出 " + new Date().toLocaleTimeString("zh-CN", { hour12: false }), "ok");
       toast("导出成功，文件已下载并保存到 output 文件夹", "ok");
     }).catch(function (err) {
@@ -1136,7 +1205,7 @@
       "<span>已勾选 <b>" + picked.length + "</b> 人</span>" +
       "<span>本次填入 <b>" + (data.count || 0) + "</b> 个" + esc(valueHead) + "</span>" +
       (data.mode === "total"
-        ? "<span>每人 <b>" + esc(money(data.unit)) + "</b> 元（总额 " + esc(money(data.total)) + "）</span>"
+        ? "<span>按分均摊，前 " + (data.remainderCount || 0) + " 人各补 0.01 元（总额 " + esc(money(data.total)) + "）</span>"
         : "<span>填入部分小计 <b>" + esc(money(data.filledAmount || 0)) + "</b> 元</span>") +
       (data.keptCount
         ? "<span>另有 " + data.keptCount + " 人未填、保持原样</span>" : "") +
@@ -1252,8 +1321,7 @@
       if (!box.hidden) { $("#pasteArea").focus(); scrollIntoViewSafe($("#pasteArea")); }
     });
     $("#tileManual").addEventListener("click", function () {
-      addStudent();
-      gotoStep(2);
+      libraryUI.open(null);
     });
 
     ["dragenter", "dragover"].forEach(function (evt) {
@@ -1289,11 +1357,8 @@
       $("#preview").hidden = true;
     });
     $("#btnClearStudents").addEventListener("click", function () {
-      if (!window.confirm("清空当前 " + state.students.length + " 位学生？")) return;
-      state.students = [];
-      rowCache.clear();
-      $("#tbody").innerHTML = "";
-      renderTable(); saveNow();
+      if (!window.confirm("清空本次名单？所有人员仍保存在人员库，可随时再加入。")) return;
+      removeFromBatch(state.students.map(function (p) { return p.id; })).catch(function () {});
     });
 
     // --- 第2步：金额按钮 ---
@@ -1398,13 +1463,9 @@
     });
     $("#btnAdd").addEventListener("click", function () { addStudent(); });
     $("#btnDeleteUnchecked").addEventListener("click", function () {
-      var n = state.students.filter(function (s) { return !s.checked; }).length;
-      if (!n) return toast("没有未勾选的学生", "warn");
-      if (!window.confirm("删除 " + n + " 位未勾选的学生？")) return;
-      state.students = state.students.filter(function (s) { return s.checked; });
-      rowCache.clear();
-      $("#tbody").innerHTML = "";
-      renderTable(); saveNow();
+      var ids = state.students.filter(function (p) { return !p.checked; }).map(function (p) { return p.id; });
+      if (!ids.length) return toast("没有未勾选人员", "warn");
+      removeFromBatch(ids).catch(function () {});
     });
 
     function addStudent() {
@@ -1477,11 +1538,7 @@
       var id = tr.dataset.id;
       var student = studentById(id);
       if (!student) return;
-      if (!window.confirm("删除学生「" + (student.name || student.studentId || "未命名") + "」？")) return;
-      state.students = state.students.filter(function (s) { return s.id !== id; });
-      rowCache.delete(id);
-      tr.remove();
-      renderTable(); saveNow();
+      removeFromBatch([id]).catch(function () {});
     });
 
     // --- 表格：粘贴一列 / 回车跳行 ---
@@ -1528,12 +1585,15 @@
     // --- 第3步：导出 ---
     $("#btnExportDocx").addEventListener("click", function () { exportFiles(["docx"]); });
     $("#btnExportXls").addEventListener("click", function () { exportFiles(["xls"]); });
-    $("#btnExportBoth").addEventListener("click", function () { exportFiles(["docx", "xls"]); });
+    $("#btnExportPdf").addEventListener("click", function () { exportFiles(["pdf"]); });
+    $("#btnExportSubmit").addEventListener("click", function () { exportFiles(["pdf", "submission"]); });
+    $("#btnExportBoth").addEventListener("click", function () { exportFiles(["docx", "pdf", "xls", "submission"]); });
 
     // --- 抽屉表单 ---
     $$("[data-setting]").forEach(function (el) {
       el.addEventListener("input", function () {
         state.settings[el.dataset.setting] = el.value;
+        renderSettings(); renderRecap();
         if (el.dataset.setting === "period") renderPeriod();
         scheduleSave();
       });
@@ -1577,7 +1637,7 @@
     });
 
     window.addEventListener("beforeunload", function () {
-      if (state.saveTimer) {
+      if (state.saveTimer && !state.saving && !state.conflict) {
         try {
           navigator.sendBeacon("/api/settings",
             new Blob([JSON.stringify(payload())], { type: "application/json" }));
@@ -1675,15 +1735,29 @@
     renderTemplates();
     renderTable();
     renderRecap();
+    if (libraryUI) libraryUI.render();
   }
 
   function boot() {
+    libraryUI = new PayrollLibrary({
+      getLibrary: function () { return state.library; }, uid: uid, toast: toast,
+      defaults: function () { return state.batch; },
+      currentIds: function () { return state.students.map(function (p) { return p.id; }); },
+      add: addFromLibrary,
+      backup: function () { return saveNow().then(function () { return api("/api/library/backup"); }); },
+      mutate: function (path, body) { return saveNow().then(function () {
+        return queueWrite(path, body, true);
+      }).then(function (data) { renderAll(); return data; }); }
+    });
     bind();
+    $("#btnRestoreDraft").onclick = restoreDraft;
+    $("#btnDismissDraft").onclick = function () { localStorage.removeItem(DRAFT_KEY); $("#draftBanner").hidden = true; };
     bindHeightFit();
     setSaveState("加载中…");
     Promise.all([api("/api/settings"), api("/api/templates")])
       .then(function (res) {
         var ws = res[0] || {};
+        acceptWorkspace(ws, false);
         state.settings = Object.assign({}, state.settings, ws.settings || {});
         state.batch = Object.assign({}, state.batch, ws.batch || {});
         if (Object.prototype.toString.call(ws.feePresets) === "[object Array]") {
@@ -1715,7 +1789,11 @@
         }
         applyHash();
         setSaveState("已载入本地数据", "ok");
-        scheduleSave();
+        try {
+          var draft = JSON.parse(localStorage.getItem(DRAFT_KEY));
+          if (draft && draft.revision === state.revision) restoreDraft();
+          else if (draft) $("#draftBanner").hidden = false;
+        } catch (e) { /* malformed browser draft cannot overwrite saved data */ }
       })
       .catch(function (err) {
         setSaveState("加载失败", "err");

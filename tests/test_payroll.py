@@ -240,7 +240,8 @@ class ApiTests(unittest.TestCase):
                 text = "".join(n.text or "" for n in doc.element.iter(qn("w:t")))
                 self.assertIn("测试甲", text)
                 self.assertNotIn("测试乙", text)
-                self.assertIn("1600", text)
+                # 金额带千分位，和页面上看到的一致
+                self.assertIn("1,600", text)
                 self.assertLess(text.index("测试甲"), text.index("测试丙"))
                 self.assertEqual(Path(results["pdf"]["path"]).read_bytes()[:5], b"%PDF-")
                 sheet = xlrd.open_workbook(results["submission"]["path"]).sheet_by_index(0)
@@ -250,6 +251,69 @@ class ApiTests(unittest.TestCase):
                 roster = xlrd.open_workbook(results["xls"]["path"]).sheet_by_index(0)
                 self.assertEqual((roster.nrows,roster.ncols), (4,7))
                 self.assertEqual(roster.cell_value(2,0), "")
+
+    def test_reason_template_never_names_people_and_marks_todo(self):
+        """事由按模板生成：不写"xxx等N位"，待填的地方加高亮。"""
+        settings = {"period": "2026年9月", "projectName": "测试项目"}
+        student = {"name": "测试甲", "studentId": "20260001", "identityName": "本科生"}
+
+        # 默认模板：身份 + 姓名 + 两处待填写占位
+        text = docx_gen.build_reason(student, settings, project_name="")
+        self.assertEqual(text, "本科生测试甲参与了【待填写项目名称】项目，完成了【待填写工作内容】工作。")
+        self.assertNotIn("等", text)
+
+        # 按项目组发放：项目名统一替换
+        text = docx_gen.build_reason(student, settings, project_name="国家重点研发")
+        self.assertIn("参与了国家重点研发项目", text)
+
+        # 填了工作内容就不再高亮
+        filled = dict(settings, workContent="数据清洗与模型训练")
+        self.assertIn("完成了数据清洗与模型训练工作", docx_gen.build_reason(student, filled))
+
+        # 本人自己写的优先
+        own = dict(student, reason="自己写的事由")
+        self.assertEqual(docx_gen.build_reason(own, settings), "自己写的事由")
+
+        # 说明段落不再点名
+        note = docx_gen.build_note(settings, [student])
+        self.assertNotIn("测试甲", note)
+        self.assertNotIn("等", note)
+        self.assertIn("见下表", note)
+
+    def test_export_marks_todo_highlight_in_word_and_pdf(self):
+        # reason 留空才会走模板；自己填了事由的以自己写的为准（见下面第二个断言）
+        blank = person("h1", "20260001", "测试甲", identityName="本科生")
+        blank["reason"] = ""
+        students = [blank]
+        payload = {"settings": {"projectType": "research", "period": "2026年9月"},
+                   "students": students, "kinds": ["docx", "pdf"]}
+        results = self.request("/api/export", payload)["results"]
+
+        doc = Document(results["docx"]["path"])
+        highlighted, plain = [], []
+        for run in doc.element.iter(qn("w:r")):
+            body = "".join(n.text or "" for n in run.iter(qn("w:t")))
+            if not body:
+                continue
+            rPr = run.find(qn("w:rPr"))
+            mark = rPr.find(qn("w:highlight")) if rPr is not None else None
+            (highlighted if mark is not None else plain).append(body)
+        joined = "".join(plain + highlighted)
+        # 方括号只作为输入标记，导出时要去掉
+        self.assertNotIn("【", joined)
+        self.assertNotIn("】", joined)
+        self.assertIn("待填写项目名称", highlighted)
+        self.assertIn("待填写工作内容", highlighted)
+        self.assertIn("本科生测试甲参与了", "".join(plain))
+
+        # 自己写了事由的：原样使用，不加高亮
+        own = [person("h2", "20260002", "测试乙", identityName="研究生")]
+        payload = {"settings": {"projectType": "research", "period": "2026年9月"},
+                   "students": own, "kinds": ["docx"]}
+        path = self.request("/api/export", payload)["results"]["docx"]["path"]
+        text = "".join(n.text or "" for n in Document(path).element.iter(qn("w:t")))
+        self.assertIn("参与科研开发与实验验证", text)
+        self.assertNotIn("待填写", text)
 
     def test_export_rejects_missing_name_and_missing_submission_id(self):
         for students in ([person(name="")], [person(sid="")]):

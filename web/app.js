@@ -78,15 +78,29 @@
     return /^-?\d+(\.\d+)?$/.test(text) ? parseFloat(text) : NaN;
   }
 
-  function fmt(value) {
+  /** 金额按分四舍五入。用整数分相乘，避免 100.5×3 变成 301.49999999999994。 */
+  function roundMoney(value) {
     var n = toNum(value);
-    if (isNaN(n)) return value === null || value === undefined ? "" : String(value);
-    if (Number.isInteger(n) && Math.abs(n) < 1e15) return String(n);
-    return String(parseFloat(n.toFixed(2)));
+    if (isNaN(n)) return NaN;
+    var cents = Math.round((Math.abs(n) + Number.EPSILON) * 100);
+    return (n < 0 ? -cents : cents) / 100;
+  }
+
+  function moneyText(value) {
+    var n = roundMoney(value);
+    if (isNaN(n)) return "";
+    if (Number.isInteger(n)) return String(n);
+    var fixed = n.toFixed(2);
+    return fixed.replace(/0+$/, "").replace(/\.$/, "");
+  }
+
+  function fmt(value) {
+    var text = moneyText(value);
+    return text === "" && value !== null && value !== undefined ? String(value) : text;
   }
 
   function money(value) {
-    var n = toNum(value);
+    var n = roundMoney(value);
     if (isNaN(n)) return "0";
     return n.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
   }
@@ -98,10 +112,11 @@
   }
 
   function calcAmount(student) {
-    if (student.manual) return toNum(student.amount) || 0;
+    if (student.manual) return roundMoney(student.amount) || 0;
     var rate = toNum(student.rate), hours = toNum(student.hours);
     if (isNaN(rate) || isNaN(hours)) return 0;
-    return rate * hours;
+    // 与导出文件同一个口径：分位四舍五入，页面上看到的数就是文件里的数
+    return roundMoney(rate * hours);
   }
 
   function effAmount(student) {
@@ -715,6 +730,65 @@
     $("#batchRate").placeholder = state.batch.rate || "100";
     $("#batchHours").placeholder = state.batch.hours || "10";
     $("#batchCollege").placeholder = state.batch.college || "学院";
+    renderReasonBox();
+  }
+
+  // ---------------------------------------------------------- 事由模板
+  var DEFAULT_REASON_TEMPLATE = "{身份}{姓名}参与了【待填写项目名称】项目，完成了【待填写工作内容】工作。";
+
+  /** 和 docx_gen.build_reason 同一套规则，用来在界面上预览导出来长什么样。 */
+  function buildReason(sample) {
+    var template = String(state.settings.reasonTemplate || "").trim() || DEFAULT_REASON_TEMPLATE;
+    var project = String(state.settings.reasonProjectGroup || "").trim()
+      ? identityName(state.settings.reasonProjectGroup) : "";
+    var work = String(state.settings.workContent || "").trim();
+    var text = template
+      .replace(/\{身份组?\}/g, sample.identityName || "")
+      .replace(/\{姓名\}/g, sample.name || "")
+      .replace(/\{学号\}/g, sample.studentId || "")
+      .replace(/\{时段\}/g, String(state.settings.period || ""));
+    return text.replace(/【([^】]*)】/g, function (all, label) {
+      if (label.indexOf("项目") >= 0) return project || "【待填写项目名称】";
+      if (label.indexOf("工作") >= 0 || label.indexOf("内容") >= 0) return work || "【待填写工作内容】";
+      return project || work || all;
+    });
+  }
+
+  /** 【…】 在界面上也显示成高亮，和导出文件里一致。 */
+  function reasonHtml(text) {
+    return esc(text).replace(/【([^】]*)】/g, '<mark class="todo">$1</mark>');
+  }
+
+  function renderReasonBox() {
+    var select = $("#reasonProjectGroup");
+    if (select) {
+      var projects = libraryGroups("project");
+      var current = String(state.settings.reasonProjectGroup || "");
+      if (current && !projects.some(function (g) { return g.id === current; })) {
+        state.settings.reasonProjectGroup = "";
+        current = "";
+      }
+      var options = '<option value="">不按项目组（用上面的项目名称 / 留高亮）</option>' +
+        projects.map(function (g) {
+          return '<option value="' + esc(g.id) + '"' + (g.id === current ? " selected" : "") +
+            ">" + esc(g.name) + "</option>";
+        }).join("");
+      if (select.dataset.signature !== options) {
+        select.dataset.signature = options;
+        select.innerHTML = options;
+      }
+      if (select.value !== current) select.value = current;
+      select.disabled = projects.length === 0;
+    }
+    var preview = $("#reasonPreview");
+    if (preview) {
+      var used = state.students[0];
+      preview.innerHTML = reasonHtml(buildReason({
+        name: used && used.name ? used.name : "张三",
+        studentId: used ? (used.studentId || "") : "20260001",
+        identityName: used ? identityName(used.identityId) : "本科生"
+      })) || '<span class="tip">（模板是空的）</span>';
+    }
   }
 
   function renderPresets() {
@@ -1275,7 +1349,11 @@
     saveNow().then(function () { return postJSON("/api/export", {
       settings: state.settings, batch: state.batch,
       feePresets: state.feePresets, periodPresets: state.periodPresets,
-      students: state.students, kinds: kinds, label: $("#exportLabel").value.trim()
+      students: state.students.map(function (s) {
+        // 事由里的 {身份} 要用身份组名，导出前把它一起带上
+        return Object.assign({}, s, { identityName: identityName(s.identityId) });
+      }),
+      kinds: kinds, label: $("#exportLabel").value.trim()
     }); }).then(function (data) {
       var results = data.results || {};
       var html = [];
@@ -2005,6 +2083,7 @@
     renderPresets();
     renderTemplates();
     renderImportGroup();
+    renderReasonBox();
     renderTable();
     renderRecap();
     if (libraryUI) libraryUI.render();

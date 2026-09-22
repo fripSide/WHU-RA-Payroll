@@ -43,17 +43,56 @@ def _font():
 
 
 def _paragraph(element, font, default_size=10.5, default_align=0):
-    text = "".join((node.text or "") if node.tag == qn("w:t") else "\n"
-                   for node in element.iter() if node.tag in (qn("w:t"), qn("w:br")))
-    size = next((float(n.get(qn("w:val"))) / 2 for n in element.iter(qn("w:sz"))), default_size)
+    """把一个 w:p 转成 reportlab 段落；带黄色高亮的 run 会带上底色。"""
+    pieces = []
+    size = default_size
+    for node in element.iter():
+        if node.tag == qn("w:t"):
+            pieces.append((node.text or "", _run_highlighted(node)))
+        elif node.tag == qn("w:br"):
+            pieces.append(("\n", False))
+    if not pieces:
+        pieces = [("", False)]
+
+    for node in element.iter(qn("w:sz")):
+        try:
+            size = float(node.get(qn("w:val"))) / 2
+        except (TypeError, ValueError):
+            continue
+        break
+
+    text = "".join(chunk for chunk, _ in pieces)
     # Text before the table can contain the document title and signature line.
     align = element.find("w:pPr/w:jc", namespaces=element.nsmap)
     align = {"center": 1, "right": 2}.get(align.get(qn("w:val")), 0) if align is not None else default_align
     style = ParagraphStyle("form", fontName=font, fontSize=size, leading=size * 1.35,
                            alignment=align, wordWrap="CJK", spaceAfter=0, spaceBefore=0)
-    markup = escape(text).replace("\n", "<br/>")
-    markup = re.sub(r" {2,}", lambda m: "&#160;" * len(m.group()), markup)
+
+    markup = ""
+    for chunk, highlighted in pieces:
+        if not chunk:
+            continue
+        body = escape(chunk).replace("\n", "<br/>")
+        body = re.sub(r" {2,}", lambda m: "&#160;" * len(m.group()), body)
+        # 与 Word 一致：待填写的地方给个黄底，提醒导出后还要补写
+        markup += '<span backColor="#FFFF00">%s</span>' % body if highlighted else body
     return Paragraph(markup or "&#160;", style)
+
+
+def _run_highlighted(text_node):
+    """这个 w:t 所属的 run 是否带高亮。"""
+    parent = text_node.getparent()
+    while parent is not None and parent.tag != qn("w:r"):
+        parent = parent.getparent()
+    if parent is None:
+        return False
+    rPr = parent.find(qn("w:rPr"))
+    if rPr is None:
+        return False
+    node = rPr.find(qn("w:highlight"))
+    if node is None:
+        return False
+    return (node.get(qn("w:val")) or "yellow") != "none"
 
 
 def generate_pdf(docx_path, out_path):

@@ -455,6 +455,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("请先勾选本次发放人员")
         if any(not str(s.get("name") or "").strip() for s in picked):
             raise ValueError("本次发放人员中有人未填写姓名")
+        students, reason_project = _attach_group_names(students, settings)
+        picked = [s for s in students if s.get("checked", True)]
         if "submission" in kinds and any(not str(s.get("studentId") or "").strip() for s in picked):
             raise ValueError("系统上传名单要求每位人员填写学号")
         for s in picked:
@@ -475,7 +477,8 @@ class Handler(BaseHTTPRequestHandler):
             out = os.path.join(staging, "detail.docx")
             if "docx" in kinds or "pdf" in kinds:
                 info = docx_gen.generate_docx(
-                    {"settings": settings, "students": students}, out, template_path=template_path)
+                    {"settings": settings, "students": students, "projectName": reason_project},
+                    out, template_path=template_path)
                 if "docx" in kinds:
                     generated["docx"] = info
                 if "pdf" in kinds:
@@ -500,6 +503,33 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Allow", "GET, POST, OPTIONS")
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+
+def _attach_group_names(students, settings):
+    """给每个人补上身份组名，并按「事由用哪个项目组」定出统一的项目名称。
+
+    事由里的 {身份} 用身份组名；项目名优先用「事由项目组」选中的项目组，
+    没选就用发放信息里的项目名称。都不写就留成高亮的占位，等去 Word 里补。
+    """
+    try:
+        library = store.load_settings().get("library") or {}
+    except Exception:  # noqa: BLE001 - 读不到就按没有分组处理，不要因此导出失败
+        library = {}
+    names = {g["id"]: g.get("name", "") for g in library.get("groups", [])}
+    kinds = {g["id"]: g.get("kind", "identity") for g in library.get("groups", [])}
+
+    chosen = str(settings.get("reasonProjectGroup") or "").strip()
+    project_name = ""
+    if chosen and kinds.get(chosen) == "project":
+        project_name = names.get(chosen, "")
+
+    out = []
+    for student in students:
+        identity = student.get("identityId") or ""
+        # 前端已经带上 identityName 就用它，否则按身份组 ID 查
+        name = str(student.get("identityName") or "").strip() or names.get(identity, "")
+        out.append(dict(student, identityName=name))
+    return out, project_name
 
 
 def _collect_roster(students):

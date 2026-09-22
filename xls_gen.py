@@ -320,6 +320,13 @@ def write_roster_xls(students, out_path, sheet_name="Sheet1"):
     center_style.alignment.vert = xlwt.Alignment.VERT_CENTER
     center_style.alignment.horz = xlwt.Alignment.HORZ_CENTER
 
+    # 金额列带千分位，和页面上看到的一致；单元格里仍是数字，导回来不影响计算
+    money_style = xlwt.XFStyle()
+    money_style.font = body_font
+    money_style.alignment = xlwt.Alignment()
+    money_style.alignment.vert = xlwt.Alignment.VERT_CENTER
+    money_style.num_format_str = "#,##0.##"
+
     headers = ["勾选", "学号", "姓名", "所在学院", "标准（元/时）", "工时",
                "助研津贴(三兼费)"]
     for col, title in enumerate(headers):
@@ -344,7 +351,7 @@ def write_roster_xls(students, out_path, sheet_name="Sheet1"):
         amount = student.get("amount")
         if amount in (None, ""):
             amount = _to_number(student.get("rate")) * _to_number(student.get("hours"))
-        sheet.write(row, 6, _to_number(amount), body_style)
+        sheet.write(row, 6, _to_number(amount), money_style)
 
     for col, width in enumerate((8, 18, 12, 24, 13, 10, 22)):
         sheet.col(col).width = 256 * width

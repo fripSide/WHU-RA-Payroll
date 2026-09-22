@@ -7,6 +7,7 @@
 import os
 import re
 import copy
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from docx import Document
 from docx.oxml.ns import qn
@@ -31,8 +32,11 @@ ROW_TOTAL = 14    # 合计行
 # --------------------------------------------------------------------------
 # 数值格式化
 # --------------------------------------------------------------------------
-def fmt_number(value, blank_zero=False):
-    """把输入格式化成适合填表的字符串；非数字原样返回。"""
+def fmt_number(value, blank_zero=False, thousands=False):
+    """把输入格式化成适合填表的字符串；非数字原样返回。
+
+    thousands=True 时给整数部分加千分位（表格里的金额用，和页面上显示一致）。
+    """
     if value is None:
         return ""
     if isinstance(value, str):
@@ -52,8 +56,16 @@ def fmt_number(value, blank_zero=False):
     if blank_zero and number == 0:
         return ""
     if number == int(number) and abs(number) < 1e15:
-        return str(int(number))
-    return ("%.2f" % number).rstrip("0").rstrip(".")
+        text = str(int(number))
+    else:
+        text = ("%.2f" % number).rstrip("0").rstrip(".")
+    if thousands:
+        sign = "-" if text.startswith("-") else ""
+        body = text[1:] if sign else text
+        whole, _, frac = body.partition(".")
+        whole = "{:,}".format(int(whole)) if whole.isdigit() else whole
+        text = sign + whole + ("." + frac if frac else "")
+    return text
 
 
 def to_money(value):
@@ -61,6 +73,15 @@ def to_money(value):
         return float(str(value).replace(",", "").strip() or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def to_cents(value):
+    """金额转成整数"分"，四舍五入——和界面、后端同一个口径。"""
+    try:
+        number = Decimal(str(value).replace(",", "").strip() or "0")
+    except (InvalidOperation, ValueError):
+        return 0
+    return int((number * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def _id_sort_key(student):
@@ -149,6 +170,8 @@ def _set_text_on_paragraph(para, text, style_rPr=None, fallback_para=None):
     模板里同一个单元格可能出现"数字用 Times New Roman、中文用宋体"的情况
     （例如项目名称 2026年才科研启动经费）。这里按字符类型拆分 run，
     把这两种字体都还原出来，保证和模板一模一样。
+
+    文字里的 【…】 会被去掉，并给这一段加上黄色高亮——用来标出"待填写"的部分。
     """
     # 先找字体样板：模板该段落自己的 -> 调用方给的 -> 备用段落的
     if style_rPr is None:
@@ -170,19 +193,22 @@ def _set_text_on_paragraph(para, text, style_rPr=None, fallback_para=None):
             para.remove(node)
 
     body = "" if text is None else str(text)
-    chunks = _split_by_script(body, runs_to_copy, style_rPr)
+    segments = _split_marks(body)
 
-    for chunk, rPr in chunks:
-        run = OxmlElement("w:r")
-        if rPr is not None:
-            run.append(copy.deepcopy(rPr))
-        para.append(run)
-        text_node = OxmlElement("w:t")
-        text_node.set(qn("xml:space"), "preserve")
-        text_node.text = chunk
-        run.append(text_node)
+    for segment, marked in segments:
+        for chunk, rPr in _split_by_script(segment, runs_to_copy, style_rPr):
+            run = OxmlElement("w:r")
+            if rPr is not None:
+                run.append(copy.deepcopy(rPr))
+            if marked:
+                _highlight(run)
+            para.append(run)
+            text_node = OxmlElement("w:t")
+            text_node.set(qn("xml:space"), "preserve")
+            text_node.text = chunk
+            run.append(text_node)
 
-    if not chunks:  # 空字符串也要留一个 run，保持段落结构
+    if not segments:  # 空字符串也要留一个 run，保持段落结构
         run = OxmlElement("w:r")
         if style_rPr is not None:
             run.append(copy.deepcopy(style_rPr))
@@ -193,6 +219,75 @@ def _set_text_on_paragraph(para, text, style_rPr=None, fallback_para=None):
         run.append(text_node)
 
     return para
+
+
+MARK_RE = re.compile(r"【([^】]*)】")
+
+# OOXML 里 w:rPr 的子元素顺序也是固定的，新增元素必须插到正确位置。
+RPR_ORDER = ("w:rStyle", "w:rFonts", "w:b", "w:bCs", "w:i", "w:iCs", "w:caps",
+             "w:smallCaps", "w:strike", "w:dstrike", "w:outline", "w:shadow",
+             "w:emboss", "w:imprint", "w:noProof", "w:snapToGrid", "w:vanish",
+             "w:webHidden", "w:color", "w:spacing", "w:w", "w:kern", "w:position",
+             "w:sz", "w:szCs", "w:highlight", "w:u", "w:effect", "w:bdr",
+             "w:shd", "w:fitText", "w:vertAlign", "w:rtl", "w:cs", "w:em",
+             "w:lang", "w:eastAsianLayout", "w:specVanish", "w:oMath")
+
+
+def insert_ordered(parent, element, order):
+    """按 schema 顺序把 element 插入 parent，避免子元素顺序非法。"""
+    tag = element.tag
+    index = None
+    for position, name in enumerate(order):
+        if qn(name) == tag:
+            index = position
+            break
+    if index is None:
+        parent.append(element)
+        return element
+
+    for child in list(parent):
+        child_index = None
+        for position, name in enumerate(order):
+            if qn(name) == child.tag:
+                child_index = position
+                break
+        if child_index is not None and child_index > index:
+            child.addprevious(element)
+            return element
+    parent.append(element)
+    return element
+
+
+
+def _split_marks(text):
+    """把 【待填写】 拆成 (文字, 是否高亮) 两段，去掉方括号。"""
+    out = []
+    pos = 0
+    for match in MARK_RE.finditer(text):
+        if match.start() > pos:
+            out.append((text[pos:match.start()], False))
+        if match.group(1):
+            out.append((match.group(1), True))
+        pos = match.end()
+    if pos < len(text):
+        out.append((text[pos:], False))
+    return out
+
+
+def _highlight(run):
+    """给 run 加上黄色高亮；w:highlight 必须排在 w:rPr 的正确位置。"""
+    rPr = run.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        run.insert(0, rPr)
+    existing = rPr.find(qn("w:highlight"))
+    if existing is not None:
+        existing.set(qn("w:val"), "yellow")
+        return existing
+    node = OxmlElement("w:highlight")
+    node.set(qn("w:val"), "yellow")
+    insert_ordered(rPr, node, RPR_ORDER)
+    return node
 
 
 def _run_styles(parent):
@@ -319,31 +414,6 @@ TCPR_ORDER = ("w:cnfStyle", "w:tcW", "w:gridSpan", "w:hMerge", "w:vMerge",
               "w:tcFitText", "w:vAlign", "w:hideMark")
 
 
-def insert_ordered(parent, element, order):
-    """按 schema 顺序把 element 插入 parent，避免子元素顺序非法。"""
-    tag = element.tag
-    index = None
-    for position, name in enumerate(order):
-        if qn(name) == tag:
-            index = position
-            break
-    if index is None:
-        parent.append(element)
-        return element
-
-    for child in list(parent):
-        child_index = None
-        for position, name in enumerate(order):
-            if qn(name) == child.tag:
-                child_index = position
-                break
-        if child_index is not None and child_index > index:
-            child.addprevious(element)
-            return element
-    parent.append(element)
-    return element
-
-
 def set_paragraph_align(para, value="center"):
     """设置段落对齐。
 
@@ -420,11 +490,78 @@ def set_cell_shading(tc, fill="F2F2F2"):
 # --------------------------------------------------------------------------
 # 主流程
 # --------------------------------------------------------------------------
-def build_note(settings, students):
-    """生成发放事项说明正文。
+# 事由模板：{身份} 会换成人员所属的身份组名（研究生 / 本科生 / …）。
+# 【…】 里的内容是"待填写"的占位，导出时会**去掉方括号并加黄色高亮**，
+# 提醒到 Word 里补写；填了值就直接写值，不再高亮。
+DEFAULT_REASON_TEMPLATE = "{身份}{姓名}参与了【待填写项目名称】项目，完成了【待填写工作内容】工作。"
+PLACEHOLDER_PROJECT = "待填写项目名称"
+PLACEHOLDER_WORK = "待填写工作内容"
 
+
+def identity_name(person):
+    """取这个人的身份组名（研究生 / 本科生 / AI 补充 …）。
+
+    正常由调用方填好 identityName；这里兜住直接调用 docx_gen 的情况。
+    """
+    for key in ("identityName", "groupName", "identity"):
+        value = str(person.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def build_reason(person, settings, project_name=""):
+    """按模板生成某人的发放事由。
+
+    取值优先级：
+    - 这个人自己填了「发放事由及依据」 -> 原样用它
+    - {身份}   -> 该人员的身份组名（研究生 / 本科生 / AI 补充 …）
+    - 项目名   -> 调用方给的项目组名（按项目组发放时统一写它）
+                  -> 没选项目组就留成高亮的「待填写项目名称」，
+                     不拿表头的项目名称去顶——表头那个是整张表的项目，
+                     不一定等于某个人实际参与的项目
+    - 工作内容 -> 发放信息里填的「工作内容」
+                  -> 没填就是高亮的「待填写工作内容」
+    """
+    own = str(person.get("reason") or "").strip()
+    if own:
+        return own
+
+    template = str(settings.get("reasonTemplate") or "").strip() or DEFAULT_REASON_TEMPLATE
+    work = str(settings.get("workContent") or "").strip()
+    project = str(project_name or "").strip()
+
+    text = template
+    for token in ("{身份}", "{身份组}"):
+        text = text.replace(token, str(person.get("identityName") or "").strip())
+    text = text.replace("{姓名}", str(person.get("name") or "").strip())
+    text = text.replace("{学号}", str(person.get("studentId") or "").strip())
+    text = text.replace("{时段}", str(settings.get("period") or "").strip())
+
+    # 【项目名称】/【工作内容】这类占位：有值就填值，没值就留成高亮的提示文字
+    def fill(match):
+        label = match.group(1)
+        if "项目" in label:
+            return project or ("【%s】" % PLACEHOLDER_PROJECT)
+        if "工作" in label or "内容" in label:
+            return work or ("【%s】" % PLACEHOLDER_WORK)
+        return project or work or match.group(0)
+
+    return MARK_RE.sub(fill, text)
+
+
+def reason_template_preview(settings):
+    """给界面用：把模板渲染成一个示例，方便一眼看出导出来长什么样。"""
+    sample = {"name": "张三", "studentId": "20260001", "identityName": "本科生", "reason": ""}
+    return build_reason(sample, settings)
+
+
+def build_note(settings, students):
+    """生成"发放事项说明"这一段。
+
+    不再写"xxx等N位"这种会过期的话：
     - 说明里带 {人数}/{第一位学生} 等占位符：替换占位符
-    - 说明是模板自带的样例（如“本人项目组柯昀志等9位…”）：按当前名单重写
+    - 模板自带的样例说明、或留空：用不点名的固定说法
     - 其它（用户自己写的）：原样保留
     """
     template = (settings.get("note") or "").strip()
@@ -433,7 +570,7 @@ def build_note(settings, students):
     lead_name = names[0] if names else ""
 
     if not template:
-        return _auto_note(settings, count, lead_name)
+        return _auto_note(settings)
 
     if any(token in template for token in ("{人数}", "{count}", "{第一位学生}",
                                            "{姓名}", "{时段}", "{项目名称}")):
@@ -444,22 +581,23 @@ def build_note(settings, students):
         out = out.replace("{项目名称}", str(settings.get("projectName", "")))
         return out
 
-    # 模板自带的样例说明：人数/姓名会过期，按当前名单重新生成
+    # 模板自带的样例说明：里面的姓名和人数会过期，换成不点名的固定说法
     if re.search(r"本人项目组.*?参与科研项目", template):
-        return _auto_note(settings, count, lead_name)
+        return _auto_note(settings)
 
     return template
 
 
-def _auto_note(settings, count, lead_name):
+def _auto_note(settings):
+    """不点名、不带人数的说明，谁都不会过期。"""
     period = str(settings.get("period", "")).strip()
     project = str(settings.get("projectName", "")).strip()
-    who = ("本人项目组%s等%d位本科生、研究生" % (lead_name, count)) if lead_name \
-        else ("本人项目组%d位本科生、研究生" % count)
-    parts = [who, "在%s" % period if period else "",
-             "参与科研项目%s" % project if project else "参与科研项目",
-             "的研究。负责相关研发工作。明细见下表："]
-    return "".join(parts)
+    return "".join([
+        "本人项目组本科生、研究生",
+        "在%s" % period if period else "",
+        "参与科研项目%s" % project if project else "参与科研项目",
+        "的研究。负责相关研发工作。各人的参与项目和具体工作见下表。",
+    ])
 
 
 def inspect_template(document):
@@ -514,6 +652,8 @@ def generate_docx(payload, out_path, template_path=None):
     payload = {
       "settings": {...}, "students": [ {studentId,name,college,rate,hours,amount}, ... ]
     }
+
+    projectName: 本次按项目组发放时的项目名称，会统一写进每个人的「事由」。
     """
     source = template_path or payload.get("docxTemplate") or DEFAULT_DOCX
     if not os.path.isfile(source):
@@ -526,7 +666,9 @@ def generate_docx(payload, out_path, template_path=None):
     first, total_index = layout["first"], layout["total"]
 
     settings = payload.get("settings") or {}
+    project_name = str(payload.get("projectName") or "").strip()
     students = [s for s in (payload.get("students") or []) if s.get("checked", True)]
+    students = [dict(s, identityName=identity_name(s)) for s in students]
     # 明细表按学号从小到大排；没填学号的排在最后（排序稳定，保持原相对顺序）
     students = sorted(students, key=_id_sort_key)
 
@@ -574,7 +716,7 @@ def generate_docx(payload, out_path, template_path=None):
 
     # 刷新明细行内容
     detail_rows = rows[first:rows.index(total_row)]
-    total_amount = 0.0
+    total_cents = 0
     for index, row in enumerate(detail_rows):
         cells = row.findall(qn("w:tc"))
         # 这一行自己的 run 就是最好的字体样板；空行则借用前两行
@@ -584,19 +726,22 @@ def generate_docx(payload, out_path, template_path=None):
         if index < len(students):
             student = students[index]
             amount = effective_amount(student)
-            total_amount += to_money(amount)
+            # 合计按"分"累加再还原，避免浮点误差让合计和明细对不上
+            total_cents += to_cents(amount)
             values = [
                 str(index + 1),
                 student.get("name", ""),
                 student.get("studentId", ""),
                 student.get("college", ""),
-                fmt_number(student.get("rate"), blank_zero=True),
+                fmt_number(student.get("rate"), blank_zero=True, thousands=True),
                 fmt_number(student.get("hours"), blank_zero=True),
-                fmt_number(amount, blank_zero=True),
+                fmt_number(amount, blank_zero=True, thousands=True),
             ]
             if layout["research"]:
+                reason = student.get("reason") or build_reason(
+                    student, settings, project_name=project_name)
                 values = [str(index + 1), student.get("name", ""), student.get("studentId", ""),
-                          fmt_number(amount, blank_zero=True), student.get("reason") or build_note(settings, students)]
+                          fmt_number(amount, blank_zero=True, thousands=True), reason]
             height = row.find("w:trPr/w:trHeight", namespaces=row.nsmap)
             if height is not None:
                 height.set(qn("w:hRule"), "atLeast")
@@ -618,7 +763,7 @@ def generate_docx(payload, out_path, template_path=None):
     set_cell_text(total_cells[0], "合           计")
     for para in total_cells[0].findall(qn("w:p")):
         set_paragraph_align(para, "center")
-    set_cell_text(total_cells[-1], fmt_number(total_amount),
+    set_cell_text(total_cells[-1], fmt_number(total_cents / 100, thousands=True),
                   fallback_cell=total_cells[0])
     for para in total_cells[-1].findall(qn("w:p")):
         set_paragraph_align(para, "center")
@@ -638,5 +783,5 @@ def generate_docx(payload, out_path, template_path=None):
     return {
         "path": out_path,
         "students": len(students),
-        "total": total_amount,
+        "total": total_cents / 100,
     }

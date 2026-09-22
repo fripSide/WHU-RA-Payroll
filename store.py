@@ -36,6 +36,11 @@ DEFAULT_SETTINGS = {
     "projectName": "",
     "note": "",
     "projectType": "research",
+    # 每行的「发放事由及依据」模板：{身份} 换成身份组名，【…】 是待填写（导出时高亮）
+    # 留空时由 docx_gen.DEFAULT_REASON_TEMPLATE 兜底，两边保持一致
+    "reasonTemplate": "",
+    "workContent": "",
+    "reasonProjectGroup": "",
 }
 
 DEFAULT_BATCH = {"rate": "100", "hours": "10", "college": ""}

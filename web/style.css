@@ -643,3 +643,8 @@ select.group-pick:hover, select.group-pick:focus { border-color: var(--line); ba
 select.group-pick.is-orphan { color: var(--danger); }
 tr.is-clash td { background: #fdeceb; }
 .clash { color: var(--danger); font-size: 12px; }
+
+/* 事由模板预览：待填写部分显示成高亮，和导出文件里一致 */
+.reason-preview { margin-top: 10px; }
+.reason-sample { margin: 6px 0 0; padding: 8px 10px; background: #f7f9fc; border: 1px solid var(--line); border-radius: 6px; line-height: 1.7; }
+mark.todo { background: #ffff00; color: inherit; padding: 0 1px; }

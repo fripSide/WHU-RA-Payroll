@@ -14,7 +14,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.text.paragraph import CT_P
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DOCX = os.path.join(HERE, "助研费用发放说明(1).docx")
+DEFAULT_DOCX = os.path.join(HERE, "templates", "武汉大学学生劳务费发放明细表（科研经费）.docx")
 
 # 表格行号（按模板固定；改了模板结构要同步这里）
 ROW_HEAD_1 = 0    # 发放单位 / 财务项目编号 / 兼职时段
@@ -311,6 +311,85 @@ def cell_text(tc):
     return "".join(node.text or "" for node in tc.iter(qn("w:t"))).strip()
 
 
+def _compact(text):
+    """去掉表头中的空格、换行和全角空格，便于识别不同模板。"""
+    return re.sub(r"[\s\u3000]+", "", str(text or ""))
+
+
+def _template_layout(rows):
+    """根据表头识别模板布局，返回行号和各字段的逻辑单元格位置。
+
+    科研模板：姓名/学号/实发金额/发放事由及依据；
+    非科研模板：姓名/学号/学院/标准/工时/实发金额。
+    不依赖固定行数或列数，允许模板保留自己的合并单元格和行数。
+    """
+    header_index = None
+    header_cells = None
+    for index, row in enumerate(rows):
+        cells = row.findall(qn("w:tc"))
+        labels = [_compact(cell_text(cell)) for cell in cells]
+        if any("序号" in label for label in labels) and any("姓名" in label for label in labels):
+            header_index, header_cells = index, cells
+            break
+    if header_index is None:
+        raise ValueError("模板中找不到明细表表头（需要包含序号和姓名）")
+
+    fields = {}
+    for col, cell in enumerate(header_cells):
+        label = _compact(cell_text(cell))
+        if "序号" in label:
+            fields["index"] = col
+        elif "姓名" in label:
+            fields["name"] = col
+        elif "学号" in label:
+            fields["studentId"] = col
+        elif "所在学院" in label or label == "学院":
+            fields["college"] = col
+        elif "标准" in label or "单价" in label:
+            fields["rate"] = col
+        elif "工时" in label or "时长" in label:
+            fields["hours"] = col
+        elif "实发金额" in label or "助研津贴" in label or label == "金额":
+            fields["amount"] = col
+        elif "发放事由" in label or "依据" in label:
+            fields["reason"] = col
+
+    required = ("index", "name", "studentId", "amount")
+    missing = [field for field in required if field not in fields]
+    if missing:
+        raise ValueError("模板表头缺少字段：%s" % ", ".join(missing))
+
+    total_index = None
+    for index in range(header_index + 1, len(rows)):
+        if "合计" in _compact("".join(cell_text(c) for c in rows[index].findall(qn("w:tc")))):
+            total_index = index
+            break
+    if total_index is None:
+        raise ValueError("模板中找不到合计行")
+    if total_index <= header_index + 1:
+        raise ValueError("模板中没有明细行")
+
+    # 表头以上的第 0 行是头部字段，第 1 行是项目名称；两种内置模板都如此。
+    return {
+        "head1": 0,
+        "head2": 1,
+        "header": header_index,
+        "first_detail": header_index + 1,
+        "total": total_index,
+        "fields": fields,
+    }
+
+
+def _set_header_value(row, label_predicate, value):
+    """把头部标签右侧的单元格写入值，适配合并列。"""
+    cells = row.findall(qn("w:tc"))
+    for index, cell in enumerate(cells):
+        if label_predicate(_compact(cell_text(cell))) and index + 1 < len(cells):
+            set_cell_text(cells[index + 1], value)
+            return True
+    return False
+
+
 # OOXML 里这些容器内的子元素顺序是固定的，新元素必须插到正确位置，
 # 否则 Word 打开时会提示文档已损坏。
 TCPR_ORDER = ("w:cnfStyle", "w:tcW", "w:gridSpan", "w:hMerge", "w:vMerge",
@@ -478,8 +557,8 @@ def generate_docx(payload, out_path, template_path=None):
 
     table = doc.tables[0]._tbl
     rows = table.findall(qn("w:tr"))
-    if len(rows) <= ROW_TOTAL:
-        raise ValueError("模板表格结构不符合预期（行数不足）")
+    layout = _template_layout(rows)
+    fields = layout["fields"]
 
     settings = payload.get("settings") or {}
     students = [s for s in (payload.get("students") or []) if s.get("checked", True)]
@@ -487,31 +566,38 @@ def generate_docx(payload, out_path, template_path=None):
     students = sorted(students, key=_id_sort_key)
 
     # ---- 1. 头部字段（字体沿用模板单元格自己的格式）--------------------
-    head1 = rows[ROW_HEAD_1].findall(qn("w:tc"))
-    set_cell_text(head1[1], settings.get("unitName", ""))
-    set_cell_text(head1[3], settings.get("projectCode", ""))
-    set_cell_text(head1[5], settings.get("period", ""))
+    _set_header_value(rows[layout["head1"]], lambda x: "发放单位" in x,
+                      settings.get("unitName", ""))
+    _set_header_value(rows[layout["head1"]],
+                      lambda x: "财务项目编号" in x or "项目编号" in x,
+                      settings.get("projectCode", ""))
+    _set_header_value(rows[layout["head1"]],
+                      lambda x: "兼职时段" in x or "发放月份" in x or "月份" in x,
+                      settings.get("period", ""))
+    _set_header_value(rows[layout["head2"]], lambda x: "项目名称" in x,
+                      settings.get("projectName", ""))
 
-    head2 = rows[ROW_HEAD_2].findall(qn("w:tc"))
-    set_cell_text(head2[1], settings.get("projectName", ""))
-
-    # ---- 2. 发放事项说明 ------------------------------------------------
-    # 模板该段落自带字体（Times New Roman + 等线 + sz20），直接沿用
-    note_cell = rows[ROW_NOTE].findall(qn("w:tc"))[0]
-    note_paras = note_cell.findall(qn("w:p"))
-    if len(note_paras) >= 2:
-        replace_paragraph_text(note_paras[1], build_note(settings, students))
-    elif note_paras:
-        replace_paragraph_text(note_paras[0], build_note(settings, students))
+    note = build_note(settings, students)
+    # 旧版模板把说明放在第 3 行；新科研模板把它作为每位学生的“发放事由及依据”。
+    if layout["header"] >= 3:
+        note_cell = rows[2].findall(qn("w:tc"))[0]
+        note_paras = note_cell.findall(qn("w:p"))
+        if len(note_paras) >= 2:
+            replace_paragraph_text(note_paras[1], note)
+        elif (note_paras and "序号" not in _compact(cell_text(note_cell))
+              and "发放明细" not in _compact(cell_text(note_cell))):
+            replace_paragraph_text(note_paras[0], note)
 
     # ---- 3. 明细行 ------------------------------------------------------
-    template_row = rows[ROW_FIRST_DETAIL]
-    total_row = rows[ROW_TOTAL]
+    first_detail = layout["first_detail"]
+    total_index = layout["total"]
+    template_row = rows[first_detail]
+    total_row = rows[total_index]
 
     # 模板里只有前两行填了学生，其余明细行是空的（没有 run）。
     # 记下这两行的字体样板，空行就照它们来，保证字体和模板一致。
-    style_rows = [rows[ROW_FIRST_DETAIL], rows[ROW_FIRST_DETAIL + 1]] \
-        if ROW_FIRST_DETAIL + 1 < len(rows) else [rows[ROW_FIRST_DETAIL]]
+    style_rows = [rows[first_detail], rows[first_detail + 1]] \
+        if first_detail + 1 < total_index else [rows[first_detail]]
 
     def style_cell(source_row, col):
         """从样板行里取第 col 个单元格，作为字体来源。"""
@@ -519,7 +605,7 @@ def generate_docx(payload, out_path, template_path=None):
         return cells[col] if col < len(cells) else None
 
     # 先补齐到足够行数（模板只有 10 个明细行位置）
-    available = ROW_TOTAL - ROW_FIRST_DETAIL
+    available = total_index - first_detail
     if len(students) > available:
         anchor = template_row
         for _ in range(len(students) - available):
@@ -527,10 +613,10 @@ def generate_docx(payload, out_path, template_path=None):
             anchor.addnext(clone)
             anchor = clone
         rows = table.findall(qn("w:tr"))
-        total_row = rows[ROW_TOTAL + (len(students) - available)]
+        total_row = rows[total_index + (len(students) - available)]
 
     # 刷新明细行内容
-    detail_rows = rows[ROW_FIRST_DETAIL:rows.index(total_row) if total_row in rows else ROW_TOTAL]
+    detail_rows = rows[first_detail:rows.index(total_row) if total_row in rows else total_index]
     total_amount = 0.0
     for index, row in enumerate(detail_rows):
         cells = row.findall(qn("w:tc"))
@@ -542,16 +628,18 @@ def generate_docx(payload, out_path, template_path=None):
             student = students[index]
             amount = effective_amount(student)
             total_amount += to_money(amount)
-            values = [
-                str(index + 1),
-                student.get("name", ""),
-                student.get("studentId", ""),
-                student.get("college", ""),
-                fmt_number(student.get("rate"), blank_zero=True),
-                fmt_number(student.get("hours"), blank_zero=True),
-                fmt_number(amount, blank_zero=True),
-            ]
-            for col, value in zip(range(7), values):
+            values = {
+                "index": str(index + 1),
+                "name": student.get("name", ""),
+                "studentId": student.get("studentId", ""),
+                "college": student.get("college", ""),
+                "rate": fmt_number(student.get("rate"), blank_zero=True),
+                "hours": fmt_number(student.get("hours"), blank_zero=True),
+                "amount": fmt_number(amount, blank_zero=True),
+                "reason": note,
+            }
+            for field, col in fields.items():
+                value = values.get(field, "")
                 if col < len(cells):
                     set_cell_text(cells[col], value, fallback_cell=style_cell(donor, col))
                     for para in cells[col].findall(qn("w:p")):
@@ -578,9 +666,10 @@ def generate_docx(payload, out_path, template_path=None):
         set_cell_shading(cell, "F2F2F2")
 
     # ---- 5. 备注 --------------------------------------------------------
-    foot_cell = rows[-1].findall(qn("w:tc"))[0]
-    if not cell_text(foot_cell):
-        set_cell_text(foot_cell, "注意：本发放表须按规定流程审批。")
+    # 只有模板最后一行本身为空时才补充提示，保留模板已有的确认尾注和空白行。
+    foot_cells = rows[-1].findall(qn("w:tc"))
+    if foot_cells and not cell_text(foot_cells[0]):
+        set_cell_text(foot_cells[0], "注意：本发放表须按规定流程审批。")
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     doc.save(out_path)

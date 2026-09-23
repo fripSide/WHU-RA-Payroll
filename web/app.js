@@ -39,7 +39,7 @@
 
   var state = {
     step: 1,
-    settings: { unitName: "", projectCode: "", period: "", projectName: "", note: "" },
+    settings: { unitName: "", projectCode: "", period: "", projectName: "", note: "", projectType: "research" },
     batch: { college: "", rate: "100", hours: "10" },
     feePresets: DEFAULT_FEE_PRESETS.slice(),
     periodPresets: buildPeriodPresets(),
@@ -935,6 +935,7 @@
   function uploadDocx(file) {
     var form = new FormData();
     form.append("file", file);
+    form.append("projectType", state.settings.projectType || "research");
     $("#btnUploadDocx").disabled = true;
     api("/api/template/docx", { method: "POST", body: form }).then(function (data) {
       var s = data.settings || {};

@@ -354,7 +354,7 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _docx_template_upload(self):
-        _, files = parse_multipart(self)
+        fields, files = parse_multipart(self)
         item = files.get("file")
         if not item:
             return json_response(self, {"error": "没有收到文件"}, 400)
@@ -370,13 +370,15 @@ class Handler(BaseHTTPRequestHandler):
             probe = Document(tmp_path)
             table_count = len(probe.tables)
             settings, students = _extract_from_docx(probe)
-            saved = store.ensure_docx_template(tmp_path, item["filename"])
+            saved = store.ensure_docx_template(
+                tmp_path, item["filename"], fields.get("projectType"))
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         return json_response(self, {
             "ok": True,
             "file": os.path.basename(saved),
             "tables": table_count,
+            "projectType": store.normalize_project_type(fields.get("projectType")),
             "settings": settings,
             "students": students,
         })
@@ -387,13 +389,15 @@ class Handler(BaseHTTPRequestHandler):
         students = payload.get("students") or []
         kinds = payload.get("kinds") or ["docx", "xls"]
         label = store.safe_filename(payload.get("label") or "", "").strip("_")
-        template_path = store.current_docx_template()
+        project_type = store.normalize_project_type(settings.get("projectType"))
+        template_path = store.current_docx_template(project_type)
 
         results = {}
         if "docx" in kinds:
             out = store.next_output_path("docx", settings, label)
             info = docx_gen.generate_docx(
-                {"settings": settings, "students": students},
+                {"settings": settings, "students": students,
+                 "projectType": project_type},
                 out, template_path=template_path)
             store.save_settings({"settings": settings,
                                  "batch": payload.get("batch") or {},
@@ -468,43 +472,65 @@ def _extract_from_docx(document):
     if not rows:
         return settings, students
 
-    head = [text_of(tc) for tc in rows[0].findall(qn("w:tc"))]
-    if len(head) > 1:
-        settings["unitName"] = head[1]
-    if len(head) > 3:
-        settings["projectCode"] = head[3]
-    if len(head) > 5:
-        settings["period"] = head[5]
+    def compact(text):
+        return "".join(str(text or "").split()).replace("\u3000", "")
+
+    head_cells = rows[0].findall(qn("w:tc"))
+    head = [text_of(tc) for tc in head_cells]
+    for i, label in enumerate(head):
+        key = compact(label)
+        if i + 1 >= len(head):
+            continue
+        if "发放单位" in key:
+            settings["unitName"] = head[i + 1]
+        elif "财务项目编号" in key or "项目编号" in key:
+            settings["projectCode"] = head[i + 1]
+        elif "兼职时段" in key or "发放月份" in key or "月份" in key:
+            settings["period"] = head[i + 1]
     if len(rows) > 1:
         second = [text_of(tc) for tc in rows[1].findall(qn("w:tc"))]
         if len(second) > 1:
             settings["projectName"] = second[1]
-    if len(rows) > 2:
-        note_cell = rows[2].findall(qn("w:tc"))[0]
-        paras = note_cell.findall(qn("w:p"))
-        target = paras[1] if len(paras) >= 2 else (paras[0] if paras else None)
-        if target is not None:
-            settings["note"] = "".join(
-                node.text or "" for node in target.iter(qn("w:t"))).strip()
+    # 表头由“序号 + 姓名”识别，两个内置模板的列数和明细起始行不同。
+    header_index = None
+    labels = []
+    for i, row in enumerate(rows):
+        vals = [text_of(tc) for tc in row.findall(qn("w:tc"))]
+        compacted = [compact(v) for v in vals]
+        if any("序号" in v for v in compacted) and any("姓名" in v for v in compacted):
+            header_index, labels = i, compacted
+            break
+    if header_index is None:
+        return settings, students
+    cols = {}
+    for i, label in enumerate(labels):
+        if "姓名" in label: cols["name"] = i
+        elif "学号" in label: cols["studentId"] = i
+        elif "所在学院" in label or label == "学院": cols["college"] = i
+        elif "标准" in label or "单价" in label: cols["rate"] = i
+        elif "工时" in label or "时长" in label: cols["hours"] = i
+        elif "实发金额" in label or "助研津贴" in label or label == "金额": cols["amount"] = i
 
-    for row in rows[5:]:
+    for row in rows[header_index + 1:]:
         cells = [text_of(tc) for tc in row.findall(qn("w:tc"))]
-        joined = "".join(cells).replace(" ", "")
+        joined = compact("".join(cells))
         if not joined:
             continue
         if "合计" in joined:
             break
-        if len(cells) < 7:
+        if "name" not in cols or "studentId" not in cols:
             continue
-        if not cells[1] and not cells[2]:
+        name = cells[cols["name"]] if cols["name"] < len(cells) else ""
+        sid = cells[cols["studentId"]] if cols["studentId"] < len(cells) else ""
+        if not name and not sid:
             continue
         students.append({
-            "studentId": cells[2],
-            "name": cells[1],
-            "college": cells[3],
-            "rate": cells[4],
-            "hours": cells[5],
-            "amount": cells[6],
+            "studentId": sid,
+            "name": name,
+            "college": cells[cols["college"]] if cols.get("college", 999) < len(cells) else "",
+            "rate": cells[cols["rate"]] if cols.get("rate", 999) < len(cells) else "",
+            "hours": cells[cols["hours"]] if cols.get("hours", 999) < len(cells) else "",
+            "amount": cells[cols["amount"]] if cols.get("amount", 999) < len(cells) else "",
             "checked": True,
         })
     return settings, students

@@ -21,7 +21,9 @@ import os
 import sys
 import sysconfig
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# 本文件在 src/ 下，vendor/ 在项目根（上一级）
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(SRC_DIR)
 
 # (pip 包名, import 名)
 DEPENDENCIES = [
@@ -49,7 +51,7 @@ def vendor_candidates():
     if override:
         out.append(os.path.abspath(override))
     for name in ("pylib", "pylib2"):
-        out.append(os.path.join(HERE, "vendor", name))
+        out.append(os.path.join(ROOT, "vendor", name))
     return out
 
 
@@ -159,8 +161,8 @@ def install_target():
     override = os.environ.get("BAOXIAO_VENDOR_DIR")
     if override:
         return os.path.abspath(override)
-    second = os.path.join(HERE, "vendor", "pylib2")
-    first = os.path.join(HERE, "vendor", "pylib")
+    second = os.path.join(ROOT, "vendor", "pylib2")
+    first = os.path.join(ROOT, "vendor", "pylib")
     if _healthy_dir(first) and not os.listdir(first):
         return first           # 又干净又是空的：直接用
     return second
@@ -173,7 +175,7 @@ def install_into_vendor(names, target=None):
     target = target or install_target()
     os.makedirs(target, exist_ok=True)
     print("  缺少依赖：%s" % ", ".join(names))
-    print("  正在安装到 %s ..." % os.path.relpath(target, HERE))
+    print("  正在安装到 %s ..." % os.path.relpath(target, ROOT))
     print()
 
     env = dict(os.environ)

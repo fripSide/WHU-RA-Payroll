@@ -1,0 +1,19 @@
+{
+  "_comment": "项目配置文件 - 简化版使用",
+  "projects": [
+    {
+      "name": "2026年人才科研启动经费",
+      "code": "4212-413100008",
+      "unitName": "武汉数学与智能研究院",
+      "id": "proj_20260923161310",
+      "projectType": "non_research"
+    },
+    {
+      "name": "科学数据安全管理与泄露检测关键技术研究",
+      "code": "4212-220172589",
+      "unitName": "武汉数学与智能研究院",
+      "id": "proj_20260923163957",
+      "projectType": "research"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "_comment": "人员数据文件 - 使用JSON存储",
+  "lastUpdate": "2024-03-15T10:00:00",
+  "allPeople": [
+    {
+      "id": "person_001",
+      "studentId": "2024302111311",
+      "name": "张三",
+      "college": "国家网络安全学院"
+    },
+    {
+      "id": "person_002",
+      "studentId": "2024302111312",
+      "name": "李四",
+      "college": "计算机学院"
+    }
+  ],
+  "payrolls": [
+    {
+      "id": "payroll_20240315_001",
+      "name": "2026年9月第一批",
+      "period": "2026年9月",
+      "projectType": "research",
+      "unitName": "武汉数学与智能研究院",
+      "projectCode": "4212-413100008",
+      "projectName": "2026年科研启动经费",
+      "createTime": "2024-03-15T10:00:00",
+      "people": [
+        {
+          "personId": "person_001",
+          "studentId": "2024302111311",
+          "name": "张三",
+          "college": "国家网络安全学院",
+          "amount": "1000"
+        },
+        {
+          "personId": "person_002",
+          "studentId": "2024302111312",
+          "name": "李四",
+          "college": "计算机学院",
+          "amount": "1200"
+        }
+      ]
+    }
+  ]
+}

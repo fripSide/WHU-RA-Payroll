@@ -3,540 +3,1039 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>学生劳务费发放助手</title>
-<link rel="stylesheet" href="style.css">
+<title>劳务费发放助手</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f5f5f5;
+  padding: 20px;
+  line-height: 1.6;
+}
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  background: white;
+  padding: 30px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+h1 {
+  font-size: 24px;
+  margin-bottom: 30px;
+  color: #333;
+  border-bottom: 2px solid #1890ff;
+  padding-bottom: 10px;
+}
+.section {
+  margin-bottom: 20px;
+  padding: 20px;
+  background: #fafafa;
+  border-radius: 6px;
+}
+.section h2 {
+  font-size: 18px;
+  margin-bottom: 15px;
+  color: #555;
+}
+.form-row {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 15px;
+  flex-wrap: wrap;
+}
+.form-group {
+  flex: 1;
+  min-width: 200px;
+}
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 500;
+  color: #666;
+}
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.form-group textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+button {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+.btn-primary {
+  background: #1890ff;
+  color: white;
+}
+.btn-primary:hover {
+  background: #096dd9;
+}
+.btn-success {
+  background: #52c41a;
+  color: white;
+}
+.btn-success:hover {
+  background: #389e0d;
+}
+.btn-upload {
+  background: #722ed1;
+  color: white;
+  margin-bottom: 15px;
+}
+.btn-upload:hover {
+  background: #531dab;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 15px;
+}
+th, td {
+  padding: 10px;
+  border: 1px solid #e8e8e8;
+  text-align: left;
+}
+th {
+  background: #fafafa;
+  font-weight: 600;
+  color: #333;
+}
+td input {
+  width: 100%;
+  padding: 6px;
+  border: 1px solid #d9d9d9;
+  border-radius: 3px;
+  font-size: 14px;
+}
+td select {
+  width: 100%;
+  padding: 6px;
+  border: 1px solid #d9d9d9;
+  border-radius: 3px;
+  font-size: 14px;
+  background: white;
+}
+td input[type="number"]::-webkit-inner-spin-button,
+td input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+}
+.summary {
+  margin-top: 15px;
+  padding: 15px;
+  background: #e6f7ff;
+  border-left: 4px solid #1890ff;
+  border-radius: 4px;
+}
+.summary strong {
+  color: #1890ff;
+}
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 15px 20px;
+  background: white;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 1000;
+  animation: slideIn 0.3s;
+}
+@keyframes slideIn {
+  from { transform: translateX(400px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.toast.success { border-left: 4px solid #52c41a; }
+.toast.error { border-left: 4px solid #ff4d4f; }
+.hidden { display: none; }
+.file-info {
+  margin-top: 10px;
+  padding: 10px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  font-size: 14px;
+}
+input[type="file"] {
+  display: none;
+}
+
+/* 项目管理弹窗 */
+.modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.5);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+.modal.show {
+  display: flex;
+}
+.modal-content {
+  background: white;
+  padding: 30px;
+  border-radius: 8px;
+  max-width: 600px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.modal-header h2 {
+  margin: 0;
+}
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+}
+.project-list {
+  margin-top: 20px;
+}
+.project-item {
+  padding: 15px;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  background: #fafafa;
+}
+.project-item h4 {
+  margin: 0 0 8px 0;
+}
+.project-item p {
+  margin: 4px 0;
+  font-size: 14px;
+  color: #666;
+}
+.project-actions {
+  margin-top: 10px;
+}
+.btn-small {
+  padding: 4px 12px;
+  font-size: 13px;
+  margin-right: 8px;
+}
+</style>
 </head>
 <body>
 
-<!-- ===================== 顶栏 ===================== -->
-<header class="topbar">
-  <div class="brand">
-    <span class="brand-mark">武</span>
-    <div>
-      <h1>学生劳务费发放助手</h1>
-      <p id="subtitle">导入名单 → 设置金额 → 导出文件</p>
-    </div>
+<div class="container">
+  <h1>学生劳务费发放助手</h1>
+
+  <!-- 第1步：上传Excel -->
+  <div class="section">
+    <h2>📊 第1步：上传 Excel 名单</h2>
+    <p style="margin-bottom: 15px; color: #666;">
+      Excel 需包含列：学号、姓名、所在学院（列名和顺序自动识别）
+    </p>
+    <button class="btn-upload" onclick="document.getElementById('fileInput').click()">
+      选择 Excel 文件
+    </button>
+    <input type="file" id="fileInput" accept=".xls,.xlsx,.csv">
+    <div id="fileInfo" class="file-info hidden"></div>
   </div>
-  <div class="topbar-actions">
-    <span class="save-state" id="saveState">就绪</span>
-    <button class="btn btn-ghost" id="btnDrawer" type="button">发放信息</button>
-    <button class="btn btn-ghost" id="btnHelp" type="button">使用说明</button>
-  </div>
-</header>
 
-<!-- ===================== 步骤条 ===================== -->
-<nav class="steps" id="steps">
-  <button class="step is-active" data-step="1" type="button">
-    <span class="step-no">1</span>
-    <span class="step-text"><strong>导入名单</strong><em id="step1Info">还没有学生</em></span>
-  </button>
-  <span class="step-arrow">→</span>
-  <button class="step" data-step="2" type="button">
-    <span class="step-no">2</span>
-    <span class="step-text"><strong>勾选并设置金额、工时</strong><em id="step2Info">—</em></span>
-  </button>
-  <span class="step-arrow">→</span>
-  <button class="step" data-step="3" type="button">
-    <span class="step-no">3</span>
-    <span class="step-text"><strong>导出文件</strong><em id="step3Info">Word 明细表 / Excel 名单</em></span>
-  </button>
-</nav>
+  <!-- 第2步：编辑名单 -->
+  <div class="section">
+    <h2>📝 第2步：设置金额</h2>
+    <div id="tableContainer" class="hidden">
 
-<main class="page">
-
-  <!-- =================================================================
-       第 1 步：导入名单
-       ================================================================= -->
-  <section class="panel" data-panel="1">
-    <div class="panel-head">
-      <h2>第 1 步 · 人员库与本次名单</h2>
-      <p>人员录入后长期保存，可以随时编辑、重新分组和发放。移出本次名单不会删除人员档案。</p>
-    </div>
-
-    <div id="draftBanner" class="draft-banner" hidden>发现未保存的浏览器草稿。
-      <button id="btnRestoreDraft" class="btn btn-mini" type="button">恢复草稿到本次</button>
-      <button id="btnDismissDraft" class="btn btn-mini" type="button">丢弃草稿</button>
-    </div>
-    <section class="library" aria-label="长期人员库">
-      <div class="library-heading"><div><h3>长期人员库 <span id="libraryCount"></span></h3>
-        <p>先建立分组和人员，再将需要的人加入本次发放。</p></div>
-        <div class="library-actions">
-          <button id="btnNewPerson" class="btn btn-primary" type="button">+ 新增人员</button>
-          <button id="btnLibraryBackup" class="btn btn-ghost" type="button">备份人员库</button>
-          <button id="btnLibraryRestore" class="btn btn-ghost" type="button">导入备份</button>
-          <input id="fileLibraryRestore" type="file" accept=".json" hidden>
-        </div>
-      </div>
-      <div class="group-editor">
-        <select id="newGroupKind" aria-label="分组类型">
-          <option value="identity">身份组（一人只能有一个）</option>
-          <option value="project">项目组（可同时属于多个）</option>
-        </select>
-        <input id="newGroupName" type="text" maxlength="80" placeholder="新分组名称，如博士生 / 国家重点研发" aria-label="新分组名称">
-        <button id="btnNewGroup" class="btn btn-ghost" type="button">添加分组</button>
-        <span class="tip">身份组互斥，避免同一人重复发放；项目组可重叠</span>
-      </div>
-      <div class="group-section">
-        <div class="group-section-head"><span class="group-kind-label">身份组</span>
-          <span class="tip">每人只能属于一个；导入名单和批量勾选都按它来</span>
-          <button id="btnRenameIdentity" class="btn btn-mini" type="button" hidden>改名</button>
-          <button id="btnDeleteIdentity" class="btn btn-danger-ghost btn-mini" type="button" hidden>删除</button>
-        </div>
-        <div id="identityChips" class="group-chips" aria-label="身份分组"></div>
-      </div>
-      <div class="group-section">
-        <div class="group-section-head"><span class="group-kind-label">项目组</span>
-          <span class="tip">用来筛选和批量勾选，一个人可以在多个项目组里</span>
-          <button id="btnRenameProject" class="btn btn-mini" type="button" hidden>改名</button>
-          <button id="btnDeleteProject" class="btn btn-danger-ghost btn-mini" type="button" hidden>删除</button>
-        </div>
-        <div id="projectChips" class="group-chips" aria-label="项目分组"></div>
-      </div>
-      <div class="library-toolbar">
-        <input id="librarySearch" type="search" placeholder="搜索姓名、学号或学院" aria-label="搜索人员库">
-        <button id="btnAddGroupToBatch" class="btn btn-primary" type="button">将当前列表加入本次</button>
-      </div>
-      <div id="groupChips" class="group-chips" aria-label="人员分组" hidden></div>
-      <div class="library-table-wrap"><table class="library-table">
-        <thead><tr><th>姓名 / 学号</th><th>所在学院</th><th>身份组</th><th>项目组</th><th>操作</th></tr></thead>
-        <tbody id="libraryRows"></tbody>
-      </table><p id="libraryEmpty" class="tip">还没有人员，点击“新增人员”或在下面导入名单。</p></div>
-    </section>
-
-    <!-- 兼职时段：导入前先定好，点一下就行 -->
-    <div class="period-bar">
-      <label class="bar-label">项目类型 <select data-setting="projectType" aria-label="项目类型"><option value="research">科研经费</option><option value="non_research">非科研经费</option></select></label>
-      <span class="bar-label">兼职时段</span>
-      <div class="period-chips" id="periodChips"></div>
-      <span class="period-custom">
-        <input type="text" id="periodCustom" placeholder="或自己填，如 2026年9月" list="periodList">
-        <datalist id="periodList"></datalist>
-      </span>
-      <button class="btn btn-mini" id="btnPeriodEdit" type="button">改预设…</button>
-      <span class="bar-gap"></span>
-      <span class="tip" id="periodHint"></span>
-    </div>
-
-    <div class="import-group-bar">
-      <span class="bar-label">导入到分组</span>
-      <select id="importGroup" aria-label="导入到哪个分组" data-setting="importGroup"></select>
-      <span class="tip">这份名单里的人会整批归入该组；已有其他身份组的人会先拦下来提示，不会重复发放</span>
-    </div>
-
-    <div class="import-grid">
-      <button class="tile" id="tileFile" type="button">
-        <span class="tile-icon">📄</span>
-        <strong>选择文件</strong>
-        <em>学号 / 姓名 / 所在学院 等列自动识别，有哪列收哪列</em>
-      </button>
-      <button class="tile" id="tilePaste" type="button">
-        <span class="tile-icon">📋</span>
-        <strong>粘贴名单</strong>
-        <em>从 Excel 复制后直接贴进来</em>
-      </button>
-      <button class="tile" id="tileManual" type="button">
-        <span class="tile-icon">✏️</span>
-        <strong>逐个录入人员</strong>
-        <em>保存到人员库，可连续录入、随时修改</em>
-      </button>
-    </div>
-
-    <div class="drop" id="drop" hidden>
-      <strong>把文件拖到这里，或点击选择</strong>
-      <span>支持 .xls / .xlsx / .csv</span>
-      <input type="file" id="fileRoster" accept=".xls,.xlsx,.csv,.txt" hidden>
-    </div>
-
-    <div class="paste-box" id="pasteBox" hidden>
-      <textarea id="pasteArea" rows="8" spellcheck="false"
-        placeholder="学号,姓名,所在学院,助研津贴(三兼费)&#10;2024302111311,秦希,计算机学院,1000&#10;20243021183013,潘俊安,国家网络安全学院,1000"></textarea>
-      <div class="paste-actions">
-        <span class="tip">每行一个学生；逗号 / 制表符 / 空格分隔都行；<b>所在学院、标准、工时</b>有哪列就收哪列</span>
-        <button class="btn btn-primary" id="btnParseText" type="button">解析名单</button>
-      </div>
-    </div>
-
-    <div class="preview" id="preview" hidden>
-      <div class="preview-head">
-        <strong id="previewTitle">解析结果</strong>
-        <label class="inline-check">
-          <input type="checkbox" id="mergeToggle" checked>
-           按学号合并；无学号时仅合并唯一同名人员
-        </label>
-      </div>
-      <div class="preview-list" id="previewList"></div>
-      <div class="preview-actions">
-        <button class="btn btn-ghost" id="btnCancelImport" type="button">取消</button>
-        <button class="btn btn-primary" id="btnConfirmImport" type="button">确认导入</button>
-      </div>
-    </div>
-
-    <!-- 已导入的学生：只做概览，不放操作，避免和下一步重复 -->
-    <div class="imported" id="importedBox" hidden>
-      <div class="imported-head">
-        <strong>当前名单</strong>
-        <span id="importedSummary"></span>
-        <button class="link" id="btnClearStudents" type="button">清空本次名单（保留人员库）</button>
-      </div>
-      <div class="chips" id="importedChips"></div>
-    </div>
-  </section>
-
-  <!-- =================================================================
-       第 2 步：勾选 + 设金额
-       ================================================================= -->
-  <section class="panel" data-panel="2" hidden>
-    <div class="panel-head is-compact">
-      <h2>第 2 步 · 勾选学生，设置补贴费与工时</h2>
-      <p>打勾 = 这次要发的人；金额点下面按钮，或从 Excel 复制一列后 Ctrl+V</p>
-    </div>
-
-    <!-- 补贴费：只留一排，点一下就设好 -->
-    <div class="amount-bar">
-      <span class="bar-label">补贴费</span>
-      <div class="preset-bar" id="presetBar"></div>
-      <button class="btn btn-mini" id="btnAmountAuto" type="button"
-              title="改回 标准 × 工时 自动计算">按标准×工时</button>
-      <span class="bar-gap"></span>
-      <button class="btn btn-primary" id="btnBatchOpen" type="button">批量填入一列…</button>
-      <button class="btn btn-mini" id="btnPresetEdit" type="button">改预设…</button>
-    </div>
-
-    <!-- 批量填入一列（常驻面板，点按钮展开） -->
-    <section class="fillpanel" id="fillPanel" hidden>
-      <div class="fillpanel-head">
-        <strong>批量填入一列</strong>
-        <span class="tip">从 Excel 复制一列直接贴进来，按下面列出的顺序填给<b>已勾选</b>的学生</span>
+      <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+        <button class="btn-primary" onclick="addPerson()">+ 添加人员</button>
+        <span style="color: #666; font-size: 14px;">点击行末的删除按钮移除人员</span>
       </div>
 
-      <div class="fillpanel-tabs">
-        <button class="filltab is-active" data-fill-field="hours" type="button">工时</button>
-        <button class="filltab" data-fill-field="rate" type="button">标准（元/时）</button>
-        <button class="filltab" data-fill-field="amount" type="button">实发金额</button>
-      </div>
-
-      <textarea id="fillInput" rows="5" spellcheck="false"
-        placeholder="把从 Excel 复制的那一列粘贴到这里（每行一个数）"></textarea>
-
-      <div class="fillpanel-total" id="fillTotalBox" hidden>
-        <label class="inline-check">
-          <input type="checkbox" id="fillUseTotal">
-          改成「填总额，平均分给勾选的人」
-        </label>
-        <input type="number" id="fillTotal" min="0" step="100" placeholder="总额，如 12000" hidden>
-      </div>
-
-      <div class="fillpanel-preview" id="fillPreview"></div>
-
-      <div class="fillpanel-actions">
-        <button class="btn btn-ghost" id="btnFillCancel" type="button">取消</button>
-        <button class="btn btn-primary" id="btnFillApply" type="button" disabled>确认填入</button>
-      </div>
-    </section>
-
-    <!-- 批量：收进折叠区，默认不碍眼 -->
-    <details class="more-bar">
-      <summary>批量设置标准 / 工时 / 学院</summary>
-      <div class="more-body">
-        <label>标准
-          <input type="number" min="0" step="1" id="batchRate" class="mini">
-          <button class="btn btn-mini" data-batch-apply="rate" type="button">套用</button>
-        </label>
-        <label>工时
-          <input type="number" min="0" step="1" id="batchHours" class="mini">
-          <button class="btn btn-mini" data-batch-apply="hours" type="button">套用</button>
-        </label>
-        <label>学院
-          <input type="text" id="batchCollege" class="mini wide">
-          <button class="btn btn-mini" data-batch-apply="college" type="button">套用</button>
-        </label>
-        <span class="tip">都只作用于已勾选的学生</span>
-      </div>
-    </details>
-
-    <div class="group-select-bar">
-      <span class="bar-label">按分组勾选</span>
-      <div id="groupSelectChips" class="group-chips"></div>
-      <span class="bar-gap"></span>
-      <span class="tip">点分组名可全选/全不选整组；点「设金额」只给这一组填</span>
-    </div>
-
-    <div class="toolbar">
-      <div class="seg">
-        <button class="seg-btn" data-select="all" type="button">全选</button>
-        <button class="seg-btn" data-select="none" type="button">全不选</button>
-        <button class="seg-btn" data-select="invert" type="button">反选</button>
-      </div>
-      <input type="search" id="search" class="search" placeholder="搜索姓名 / 学号 / 学院">
-      <div class="spacer"></div>
-      <button class="btn btn-ghost" id="btnAdd" type="button">+ 添加</button>
-      <button class="btn btn-ghost" id="btnDeleteUnchecked" type="button">将未勾选人员移出本次</button>
-    </div>
-
-    <div class="table-wrap">
-      <table class="grid">
+      <table id="studentTable">
         <thead>
           <tr>
-            <th class="col-check"><input type="checkbox" id="checkAll"></th>
-            <th class="col-no">序号</th>
-            <th class="col-group">身份组</th>
-            <th class="col-sid">学号</th>
-            <th class="col-name">姓名</th>
-            <th class="col-college">所在学院</th>
-            <th class="col-rate">标准（元/时）</th>
-            <th class="col-hours">工　时</th>
-            <th class="col-amount">实发金额</th>
-            <th class="col-reason">发放事由及依据</th>
-            <th class="col-act"></th>
+            <th style="width: 50px;">序号</th>
+            <th style="width: 150px;">学号</th>
+            <th style="width: 100px;">姓名</th>
+            <th style="width: 200px;">所在学院</th>
+            <th style="width: 120px;">金额（元）</th>
+            <th style="width: 80px;">操作</th>
           </tr>
         </thead>
-        <tbody id="tbody"></tbody>
+        <tbody id="tableBody"></tbody>
       </table>
-      <p class="empty" id="empty" hidden>
-        还没有学生，<button class="link" data-goto="1" type="button">回到第 1 步导入</button>。
+      <div id="summary" class="summary"></div>
+    </div>
+  </div>
+
+  <!-- 第3步：填写模板信息 -->
+  <div class="section">
+    <h2>📋 第3步：填写模板信息</h2>
+
+    <div class="form-group">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <label style="margin: 0; font-size: 14px;">项目 *</label>
+        <button type="button" onclick="openProjectManager()"
+                style="padding: 6px 16px; font-size: 13px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
+          📋 管理项目
+        </button>
+      </div>
+      <select id="projectSelect" onchange="selectProject()" style="width: 100%; margin-bottom: 15px; padding: 8px 12px;">
+        <option value="">选择项目...</option>
+      </select>
+      <div style="display: flex; gap: 10px;">
+        <div style="flex: 1;">
+          <label style="font-size: 13px; color: #666;">财务项目编号</label>
+          <input type="text" id="projectCode" value="4212-413100008" readonly
+                 style="background: #f5f5f5; cursor: not-allowed;">
+        </div>
+        <div style="flex: 2;">
+          <label style="font-size: 13px; color: #666;">项目名称</label>
+          <input type="text" id="projectName" value="2026年科研启动经费" readonly
+                 style="background: #f5f5f5; cursor: not-allowed;">
+        </div>
+      </div>
+      <p style="margin-top: 8px; font-size: 13px; color: #999;">
+        💡 从上方下拉框选择项目，编号和名称会自动填充
       </p>
     </div>
 
-    <div class="summary" id="summary"></div>
-  </section>
-
-  <!-- =================================================================
-       第 3 步：导出
-       ================================================================= -->
-  <section class="panel" data-panel="3" hidden>
-    <div class="panel-head">
-      <h2>第 3 步 · 导出</h2>
-      <p>文件会自动下载，同时保存到程序目录的 <code>output</code> 文件夹。</p>
-    </div>
-
-    <div class="export-recap" id="exportRecap"></div>
-
-    <div class="export-cards">
-      <button class="export-card" id="btnExportDocx" type="button">
-        <span class="tile-icon">📝</span>
-        <strong>Word 明细表</strong>
-        <em>武汉大学学生劳务费发放明细表<br>格式与模板一致，含合计行</em>
-      </button>
-      <button class="export-card" id="btnExportXls" type="button">
-        <span class="tile-icon">📊</span>
-        <strong>Excel 名单</strong>
-        <em>本次名单全部人员，含未勾选人员<br>保留勾选状态，供下次导入</em>
-      </button>
-      <button class="export-card" id="btnExportPdf" type="button">
-        <span class="tile-icon">📑</span><strong>PDF 明细表</strong><em>按所选科研 / 非科研模板生成</em>
-      </button>
-      <button class="export-card is-primary" id="btnExportSubmit" type="button">
-        <span class="tile-icon">📤</span><strong>报销提交文件</strong><em>PDF 明细表 + 系统上传 Excel<br>Excel 仅含学号、姓名、助研津贴三列</em>
-      </button>
-      <button class="export-card" id="btnExportBoth" type="button">
-        <span class="tile-icon">📦</span>
-        <strong>全部导出</strong>
-        <em>Word、PDF、维护名单、系统上传名单</em>
-      </button>
-    </div>
-
-    <div class="export-label">
-      <label>文件名备注（可留空）
-        <input type="text" id="exportLabel" placeholder="如：9月第一批">
-        <em class="tip">文件名 = 兼职时段 + 备注 + 日期，换月份请改上面的「兼职时段」</em>
-      </label>
-    </div>
-
-    <div class="results" id="results"></div>
-  </section>
-
-</main>
-
-<!-- ===================== 发放信息 / 模板 抽屉 ===================== -->
-<div class="drawer-mask" id="drawerMask" hidden></div>
-<aside class="drawer" id="drawer" hidden>
-  <div class="drawer-head">
-    <h3>发放信息与模板</h3>
-    <button class="icon-btn" id="btnDrawerClose" type="button">×</button>
-  </div>
-
-  <div class="drawer-body">
-    <section class="fieldset">
-      <h4>明细表表头</h4>
-      <label class="field"><span>项目类型</span><select data-setting="projectType"><option value="research">科研经费</option><option value="non_research">非科研经费</option></select></label>
-      <label class="field"><span>发放单位</span>
-        <input type="text" data-setting="unitName" placeholder="如：武汉数学与智能研究院"></label>
-      <label class="field"><span>财务项目编号</span>
-        <input type="text" data-setting="projectCode" placeholder="如：4212-413100008"></label>
-      <label class="field"><span>兼职时段</span>
-        <input type="text" data-setting="period" placeholder="如：2026年9月"></label>
-      <em class="tip">第 1 步顶部有快捷选择，这里改也一样</em>
-      <label class="field"><span>项目名称</span>
-        <input type="text" data-setting="projectName" placeholder="如：2026年才科研启动经费"></label>
-      <label class="field"><span>项目类型</span>
-        <select data-setting="projectType" id="projectType">
-          <option value="research">科研项目</option>
-          <option value="non_research">非科研项目</option>
+    <div class="form-row">
+      <div class="form-group">
+        <label>项目类型 *</label>
+        <select id="projectType">
+          <option value="research">科研经费</option>
+          <option value="non_research">非科研经费</option>
         </select>
-        <em class="tip">导出 Word 时会自动套用对应的劳务费明细表模板。</em>
-      </label>
-    </section>
-
-    <section class="fieldset">
-      <h4>发放事项说明</h4>
-      <label class="field">
-        <textarea data-setting="note" rows="3"
-          placeholder="留空则自动生成「本人项目组本科生、研究生在{时段}参与科研项目…」"></textarea>
-        <em class="tip">可用占位符：<code>{人数}</code> <code>{第一位学生}</code> <code>{时段}</code> <code>{项目名称}</code></em>
-      </label>
-    </section>
-
-    <section class="fieldset">
-      <h4>每行「发放事由及依据」（科研表）</h4>
-      <label class="field"><span>事由模板</span>
-        <textarea data-setting="reasonTemplate" rows="3"
-          placeholder="{身份}{姓名}参与了【待填写项目名称】项目，完成了【待填写工作内容】工作。"></textarea>
-        <em class="tip">
-          可用占位符：<code>{身份}</code>（研究生 / 本科生…）<code>{姓名}</code> <code>{学号}</code> <code>{时段}</code><br>
-          用 <b>【】</b> 括起来 = <b>待填写</b>：导出时会去掉方括号，在 Word / PDF 里显示成<b>黄色高亮</b>，
-          提醒你补写；填了值就正常显示。
-        </em>
-      </label>
-      <label class="field"><span>工作内容</span>
-        <input type="text" data-setting="workContent" placeholder="留空则在文件里高亮显示「待填写工作内容」">
-        <em class="tip">填了就会写进每个人的事由；留空则留成高亮，导出后到 Word 里补。</em>
-      </label>
-      <label class="field"><span>事由里的项目名</span>
-        <select data-setting="reasonProjectGroup" id="reasonProjectGroup"></select>
-        <em class="tip">
-          选了项目组 → <b>项目名直接写进每个人的事由</b>（有项目组时默认就选上第一个，不用你动手）；<br>
-          选「不套用」→ 项目名留成<b>黄色高亮</b>，导出后到 Word / PDF 里补。
-        </em>
-      </label>
-      <div class="reason-preview">
-        <span class="tip">导出预览（以名单里第一个人为例）：</span>
-        <p id="reasonPreview" class="reason-sample"></p>
       </div>
-    </section>
-
-    <section class="fieldset">
-      <h4>名单里没填时的默认值</h4>
-      <div class="two-col">
-        <label class="field"><span>标准（元/时）</span>
-          <input type="number" min="0" step="1" data-batch="rate"></label>
-        <label class="field"><span>默认工时</span>
-          <input type="number" min="0" step="1" data-batch="hours"></label>
+      <div class="form-group">
+        <label>兼职时段 *</label>
+        <input type="text" id="period" value="" placeholder="如：2026年9月">
       </div>
-      <label class="field"><span>学院</span>
-        <input type="text" data-batch="college" placeholder="如：国家网络安全学院">
-        <em class="tip">
-          只对<b>名单里没写学院</b>的学生生效，已经写了的不动。<br>
-          所以导入的文件<b>最好带上「所在学院」这一列</b>；没带这一列的话，就全都会用这个值。
-        </em>
-      </label>
-    </section>
-
-    <section class="fieldset">
-      <h4>模板</h4>
-      <label class="field"><span>选择模板</span><select id="tplSelect"></select></label>
-      <div class="btn-grid">
-        <button class="btn btn-primary" id="btnTplApply" type="button">套用模板</button>
-        <button class="btn btn-ghost" id="btnTplSave" type="button">存为新模板</button>
-        <button class="btn btn-ghost" id="btnTplOverwrite" type="button">覆盖当前</button>
-        <button class="btn btn-danger-ghost" id="btnTplDelete" type="button">删除模板</button>
-      </div>
-      <button class="btn btn-ghost btn-block" id="btnUploadDocx" type="button">导入其它 Word 明细表作底板</button>
-      <input type="file" id="fileDocx" accept=".docx" hidden>
-      <em class="tip">换底板后，生成的文件就以它为模板，字体格式完全照搬。</em>
-    </section>
-  </div>
-</aside>
-
-<!-- ===================== 预设编辑弹窗 ===================== -->
-<div class="modal" id="modalPreset" hidden>
-  <div class="modal-box narrow">
-    <div class="modal-head">
-      <h3 id="presetModalTitle">补贴费预设</h3>
-      <button class="icon-btn" data-close type="button">×</button>
     </div>
-    <div class="modal-body">
-      <p class="tip" id="presetModalHint">逗号或换行分隔，可填小数。这些按钮会出现在第 2 步顶部。</p>
-      <textarea id="presetInputModal" rows="4" spellcheck="false"
-        placeholder="500, 800, 1000, 1200, 1500, 1600, 2000"></textarea>
-      <div class="modal-actions">
-        <button class="btn btn-ghost" id="btnPresetReset" type="button">恢复默认</button>
-        <button class="btn btn-primary" data-close type="button">完成</button>
+
+    <div class="form-group">
+      <label>发放单位 *</label>
+      <input type="text" id="unitName" value="武汉数学与智能研究院">
+    </div>
+
+    <div class="form-group">
+      <label>发放事项说明（可选）</label>
+      <textarea id="note" placeholder="留空则自动生成">参与组内科研项目</textarea>
+    </div>
+  </div>
+
+  <!-- 第4步：导出 -->
+  <div class="section">
+    <h2>📤 第4步：导出文件</h2>
+    <button class="btn-success" onclick="exportFiles()">导出 Word + Excel</button>
+    <div id="exportResult" style="margin-top: 15px;"></div>
+  </div>
+</div>
+
+<!-- 项目管理弹窗 -->
+<div id="projectModal" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>项目管理</h2>
+      <button class="close-btn" onclick="closeProjectManager()">&times;</button>
+    </div>
+
+    <div style="margin-bottom: 30px;">
+      <h3 style="margin-bottom: 15px;">新增项目</h3>
+      <div class="form-group">
+        <label>项目名称</label>
+        <input type="text" id="newProjectName" placeholder="如：2026年科研启动经费">
       </div>
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 15px;">
+        <div class="form-group">
+          <label>财务项目编号</label>
+          <input type="text" id="newProjectCode" placeholder="如：4212-413100008">
+        </div>
+        <div class="form-group">
+          <label>项目类型</label>
+          <select id="newProjectType">
+            <option value="research">科研经费</option>
+            <option value="non_research">非科研经费</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn-primary" onclick="addProject()" style="margin-top: 20px;">添加项目</button>
+    </div>
+
+    <div style="margin-top: 30px;">
+      <h3 style="margin-bottom: 15px;">已有项目</h3>
+      <div id="projectList" class="project-list"></div>
     </div>
   </div>
 </div>
 
-<!-- ===================== 帮助 ===================== -->
-<div class="modal" id="modalHelp" hidden>
-  <div class="modal-box">
-    <div class="modal-head">
-      <h3>使用说明</h3>
-      <button class="icon-btn" data-close type="button">×</button>
+<!-- 添加人员弹窗 -->
+<div id="addPersonModal" class="modal">
+  <div class="modal-content" style="max-width: 500px;">
+    <div class="modal-header">
+      <h2>添加人员</h2>
+      <button class="close-btn" onclick="closeAddPerson()">&times;</button>
     </div>
-    <div class="modal-body help">
-      <h4>三步走</h4>
-      <ol>
-        <li><b>导入名单</b>：上传 <code>.xls</code> / <code>.xlsx</code> / <code>.csv</code>，或从 Excel 复制后粘贴，也可以手动加。
-          <br><b>有哪列收哪列</b>：学号、姓名、<b>所在学院</b>、标准、工时、助研津贴，列名和顺序都自动识别；没有学院列就用抽屉里的默认学院。</li>
-        <li><b>勾选 + 设金额</b>：左边打勾决定这次要发谁。金额点顶部那一排按钮就行；行内也能直接改。改工时会自动算金额，手填过金额则以你填的为准。</li>
-        <li><b>导出</b>：Word 明细表格式与模板完全一致（字体、字号、边框、行高都一样），另外可以导出勾选学生的 Excel 名单。</li>
-      </ol>
-
-      <h4>快速录入（重点）</h4>
-      <ul>
-        <li><b>从 Excel 粘一列</b>：在 Excel 里选中一列数值复制，回到这里<b>点一下要开始填的那个格子</b>，按 <code>Ctrl+V</code>，会自动往下填。工时、金额、标准、学院都支持。</li>
-        <li><b>回车 / 上下键</b>：在一个格子里按 <code>Enter</code> 或 <code>↑</code> <code>↓</code> 直接跳到下一行的同一列，不用鼠标点。</li>
-        <li><b>一排按钮设金额</b>：先勾选学生，再点 <code>1000</code> 这样的按钮，勾选的人全部设为该金额。先点进某一行的金额格再点，就只改那一行。</li>
-      </ul>
-
-      <h4>兼职时段</h4>
-      <p>第 1 步顶部就能点选：预设的月份点一下即可，也可以自己填。点「改预设…」维护那一排月份（逗号或换行分隔，例如 <code>2026年9月, 2026年10月</code>）。它决定了 Word 表头的「兼职时段」和导出文件名开头的月份。</p>
-
-      <h4>补贴费预设</h4>
-      <p>点第 2 步的「改预设…」，用逗号分隔随便改，例如 <code>500, 800, 1000, 1234.5</code>。改完自动保存，也能存进模板。</p>
-
-      <h4>发放信息 / 模板</h4>
-      <p>明细表表头（发放单位、项目编号、时段、项目名称、发放事项说明）在右上角「发放信息」里改。模板可以把整套配置存下来复用，也可以换一份 Word 明细表当底板——换了底板，导出的字体格式就跟着新底板走。</p>
-
-      <h4>数据存哪</h4>
-      <p>工作台状态在 <code>app/settings.json</code>，模板在 <code>templates/</code>，导出的文件在 <code>output/</code>，都是普通文件，可以直接备份。</p>
+    <div class="form-group">
+      <label>学号</label>
+      <input type="text" id="newStudentId" placeholder="请输入学号">
+    </div>
+    <div class="form-group">
+      <label>姓名</label>
+      <input type="text" id="newStudentName" placeholder="请输入姓名">
+    </div>
+    <div class="form-group">
+      <label>学院</label>
+      <input type="text" id="newStudentCollege" value="国家网络安全学院">
+    </div>
+    <div class="form-group">
+      <label>金额</label>
+      <input type="text" id="newStudentAmount" placeholder="请输入金额">
+    </div>
+    <div style="display: flex; gap: 10px; margin-top: 20px;">
+      <button class="btn-primary" onclick="confirmAddPerson()">确认添加</button>
+      <button class="btn-secondary" onclick="closeAddPerson()">取消</button>
     </div>
   </div>
 </div>
 
-<div class="modal" id="personModal" hidden>
-  <div class="modal-box person-box" role="dialog" aria-modal="true" aria-labelledby="personTitle">
-    <div class="modal-head"><h3 id="personTitle">新增人员</h3><button class="icon-btn" type="button" data-close>×</button></div>
-    <form id="personForm" class="person-form">
-      <div class="two-col">
-        <label class="field">姓名<input name="name" type="text" placeholder="必填" required></label>
-        <label class="field">学号<input name="studentId" type="text" placeholder="可稍后补充"></label>
+<script>
+let projects = [];
+let uploadedFileName = ''; // 保存上传的文件名（不带扩展名）
+
+// 页面加载时设置默认时段（当前年月）和加载项目
+// 页面加载时设置默认时段（当前年月）和加载项目
+window.addEventListener('DOMContentLoaded', function() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  document.getElementById('period').value = `${year}年${month}月`;
+
+  loadProjects();
+  loadPeopleData();
+});
+
+// 加载项目列表
+function loadProjects() {
+  fetch('/api/projects')
+    .then(res => res.json())
+    .then(data => {
+      projects = data.projects || [];
+      renderProjectSelect();
+      renderProjectList();
+    })
+    .catch(err => console.error('加载项目失败:', err));
+}
+
+// 渲染项目下拉框
+function renderProjectSelect() {
+  const select = document.getElementById('projectSelect');
+  select.innerHTML = '<option value="">选择项目...</option>' +
+    projects.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+
+  // 自动选中第一个项目
+  if (projects.length > 0) {
+    select.value = projects[0].id;
+    selectProject();
+  }
+}
+
+// 选择项目
+function selectProject() {
+  const select = document.getElementById('projectSelect');
+  const projectId = select.value;
+  const project = projects.find(p => p.id === projectId);
+
+  if (project) {
+    document.getElementById('projectCode').value = project.code;
+    document.getElementById('projectName').value = project.name;
+    if (project.unitName) {
+      document.getElementById('unitName').value = project.unitName;
+    }
+    // 自动设置项目类型
+    if (project.projectType) {
+      document.getElementById('projectType').value = project.projectType;
+    }
+  }
+}
+
+// 打开项目管理
+function openProjectManager() {
+  document.getElementById('projectModal').classList.add('show');
+  renderProjectList();
+}
+
+// 关闭项目管理
+function closeProjectManager() {
+  document.getElementById('projectModal').classList.remove('show');
+}
+
+// 渲染项目列表
+function renderProjectList() {
+  const container = document.getElementById('projectList');
+  if (projects.length === 0) {
+    container.innerHTML = '<p style="color: #999;">还没有项目</p>';
+    return;
+  }
+
+  container.innerHTML = projects.map(p => `
+    <div class="project-item">
+      <h4>${p.name}</h4>
+      <p><strong>编号：</strong>${p.code}</p>
+      ${p.unitName ? `<p><strong>单位：</strong>${p.unitName}</p>` : ''}
+      <p><strong>类型：</strong>${p.projectType === 'non_research' ? '非科研经费' : '科研经费'}</p>
+      <div class="project-actions">
+        <button class="btn-primary btn-small" onclick="useProject('${p.id}')">使用</button>
+        <button class="btn-ghost btn-small" onclick="deleteProject('${p.id}')">删除</button>
       </div>
-      <label class="field">所在学院<input name="college" type="text"></label>
-      <div class="two-col">
-        <label class="field">身份组（只能选一个）
-          <select name="identityId" id="personIdentity"></select>
+    </div>
+  `).join('');
+}
+
+// 使用项目
+function useProject(projectId) {
+  const project = projects.find(p => p.id === projectId);
+  if (project) {
+    document.getElementById('projectCode').value = project.code;
+    document.getElementById('projectName').value = project.name;
+    if (project.unitName) {
+      document.getElementById('unitName').value = project.unitName;
+    }
+    // 自动设置项目类型
+    if (project.projectType) {
+      document.getElementById('projectType').value = project.projectType;
+    }
+    closeProjectManager();
+    showToast('已应用项目配置', 'success');
+  }
+}
+
+// 添加项目
+function addProject() {
+  const name = document.getElementById('newProjectName').value.trim();
+  const code = document.getElementById('newProjectCode').value.trim();
+  const projectType = document.getElementById('newProjectType').value;
+
+  if (!name || !code) {
+    showToast('请填写项目名称和编号', 'error');
+    return;
+  }
+
+  fetch('/api/projects/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      project: {
+        name: name,
+        code: code,
+        unitName: document.getElementById('unitName').value,
+        projectType: projectType
+      }
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.error) {
+      showToast(data.error, 'error');
+      return;
+    }
+    projects = data.projects;
+    document.getElementById('newProjectName').value = '';
+    document.getElementById('newProjectCode').value = '';
+    document.getElementById('newProjectType').value = 'research';
+    renderProjectSelect();
+    renderProjectList();
+    showToast('项目已添加', 'success');
+  })
+  .catch(err => {
+    showToast('添加失败: ' + err.message, 'error');
+  });
+}
+
+// 删除项目
+function deleteProject(projectId) {
+  if (!confirm('确定删除这个项目吗？')) return;
+
+  fetch('/api/projects/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: projectId })
+  })
+  .then(res => res.json())
+  .then(data => {
+    projects = data.projects;
+    renderProjectSelect();
+    renderProjectList();
+    showToast('项目已删除', 'success');
+  })
+  .catch(err => {
+    showToast('删除失败: ' + err.message, 'error');
+  });
+}
+
+// 学院列表（可配置）
+const COLLEGES = [
+  '国家网络安全学院',
+  '计算机学院',
+  '经济与管理学院',
+  '其他'
+];
+
+// 添加人员（打开弹窗）
+function addPerson() {
+  // 清空输入框
+  document.getElementById('newStudentId').value = '';
+  document.getElementById('newStudentName').value = '';
+  document.getElementById('newStudentCollege').value = '国家网络安全学院';
+  document.getElementById('newStudentAmount').value = '';
+  // 显示弹窗
+  document.getElementById('addPersonModal').classList.add('show');
+}
+
+// 关闭添加人员弹窗
+function closeAddPerson() {
+  document.getElementById('addPersonModal').classList.remove('show');
+}
+
+// 确认添加人员
+function confirmAddPerson() {
+  const studentId = document.getElementById('newStudentId').value.trim();
+  const name = document.getElementById('newStudentName').value.trim();
+  const college = document.getElementById('newStudentCollege').value.trim();
+  const amount = document.getElementById('newStudentAmount').value.trim();
+
+  if (!studentId || !name) {
+    showToast('请填写学号和姓名', 'error');
+    return;
+  }
+
+  const newPerson = {
+    id: students.length + 1,
+    studentId,
+    name,
+    college: college || '国家网络安全学院',
+    amount
+  };
+  students.push(newPerson);
+  renderTable();
+  closeAddPerson();
+  showToast('已添加新人员', 'success');
+}
+
+// 删除人员
+function deletePerson(index) {
+  if (!confirm('确定删除这个人员吗？')) return;
+  students.splice(index, 1);
+  renderTable();
+  showToast('已删除人员', 'success');
+}
+
+let students = [];
+let allPeople = [];
+let payrolls = [];
+let selectedPeople = new Set();
+
+// 加载人员数据
+function loadPeopleData() {
+  fetch('/api/people')
+    .then(res => res.json())
+    .then(data => {
+      allPeople = data.allPeople || [];
+      payrolls = data.payrolls || [];
+    })
+    .catch(err => console.error('加载人员数据失败:', err));
+}
+
+// 打开发放列表
+function openPayrollList() {
+  document.getElementById('payrollModal').classList.add('show');
+  renderPayrollList();
+}
+
+// 关闭发放列表
+function closePayrollList() {
+  document.getElementById('payrollModal').classList.remove('show');
+}
+
+// 渲染发放列表
+function renderPayrollList() {
+  const container = document.getElementById('payrollListContainer');
+  if (payrolls.length === 0) {
+    container.innerHTML = '<p style="color: #999;">还没有保存的发放列表</p>';
+    return;
+  }
+
+  container.innerHTML = payrolls.map(p => `
+    <div class="project-item">
+      <h4>${p.name}</h4>
+      <p><strong>时段：</strong>${p.period} | <strong>人数：</strong>${p.people.length} 人</p>
+      <p><strong>项目：</strong>${p.projectName}</p>
+      <div class="project-actions">
+        <button class="btn-primary btn-small" onclick="loadPayroll('${p.id}')">导入</button>
+        <button class="btn-ghost btn-small" onclick="deletePayroll('${p.id}')">删除</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// 加载发放列表
+function loadPayroll(payrollId) {
+  const payroll = payrolls.find(p => p.id === payrollId);
+  if (!payroll) return;
+
+  students = payroll.people.map((p, i) => ({
+    id: i + 1,
+    studentId: p.studentId || '',
+    name: p.name || '',
+    college: p.college || '国家网络安全学院',
+    amount: p.amount || ''
+  }));
+
+  document.getElementById('period').value = payroll.period || '';
+  document.getElementById('projectCode').value = payroll.projectCode || '';
+  document.getElementById('projectName').value = payroll.projectName || '';
+  document.getElementById('unitName').value = payroll.unitName || '';
+
+  closePayrollList();
+  document.getElementById('fileInfo').textContent = `✓ 已导入发放列表：${payroll.name}（${students.length} 人）`;
+  document.getElementById('fileInfo').classList.remove('hidden');
+  document.getElementById('tableContainer').classList.remove('hidden');
+
+  renderTable();
+  showToast(`已导入发放列表：${payroll.name}`, 'success');
+}
+
+// 删除发放列表
+function deletePayroll(payrollId) {
+  if (!confirm('确定删除这个发放列表吗？')) return;
+
+  fetch('/api/payrolls/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: payrollId })
+  })
+  .then(res => res.json())
+  .then(data => {
+    payrolls = data.payrolls;
+    renderPayrollList();
+    showToast('发放列表已删除', 'success');
+  })
+  .catch(err => showToast('删除失败: ' + err.message, 'error'));
+}
+
+// 打开总人员名单
+function openPeopleManager() {
+  document.getElementById('peopleModal').classList.add('show');
+  selectedPeople.clear();
+  renderPeopleList();
+}
+
+// 关闭总人员名单
+function closePeopleManager() {
+  document.getElementById('peopleModal').classList.remove('show');
+}
+
+// 渲染总人员名单
+function renderPeopleList() {
+  const container = document.getElementById('peopleListContainer');
+  const search = document.getElementById('peopleSearch').value.toLowerCase();
+
+  const filtered = allPeople.filter(p =>
+    p.studentId.toLowerCase().includes(search) ||
+    p.name.toLowerCase().includes(search)
+  );
+
+  if (filtered.length === 0) {
+    container.innerHTML = '<p style="color: #999;">没有找到人员</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <div style="max-height: 400px; overflow-y: auto;">
+      ${filtered.map(p => `
+        <label style="display: block; padding: 10px; border: 1px solid #e8e8e8; margin-bottom: 8px; border-radius: 4px; cursor: pointer;">
+          <input type="checkbox" value="${p.id}" onchange="togglePerson('${p.id}')">
+          <strong>${p.name}</strong> - ${p.studentId} - ${p.college}
         </label>
-        <label class="field">项目组（可多选）
-          <span class="check-row" id="personProjects"></span>
-        </label>
-      </div>
-      <div class="two-col">
-        <label class="field">标准（元/时）<input name="rate" type="number" min="0" step="0.01"></label>
-        <label class="field">工时<input name="hours" type="number" min="0" step="0.01"></label>
-      </div>
-      <label class="field">实发金额<input name="amount" type="number" min="0" step="0.01" placeholder="留空按标准 × 工时计算"></label>
-      <label class="field">发放事由及依据（科研表）<textarea name="reason" rows="2" placeholder="留空使用发放信息中的说明"></textarea></label>
-      <label class="inline-check"><input name="addToBatch" type="checkbox" checked>同时加入本次发放</label>
-      <p class="form-error" id="personError" role="alert"></p>
-      <div class="library-actions"><button class="btn btn-primary" type="submit">保存人员</button>
-        <button class="btn btn-ghost" id="btnSaveAndNext" type="button">保存并继续添加</button></div>
-    </form>
-  </div>
-</div>
-<div class="toast-wrap" id="toastWrap"></div>
+      `).join('')}
+    </div>
+  `;
+}
 
-<script src="library.js"></script>
-<script src="app.js"></script>
+// 过滤人员
+function filterPeople() {
+  renderPeopleList();
+}
+
+// 选择/取消选择人员
+function togglePerson(personId) {
+  if (selectedPeople.has(personId)) {
+    selectedPeople.delete(personId);
+  } else {
+    selectedPeople.add(personId);
+  }
+}
+
+// 导入选中人员
+function importSelectedPeople() {
+  if (selectedPeople.size === 0) {
+    showToast('请先选择人员', 'error');
+    return;
+  }
+
+  const selected = allPeople.filter(p => selectedPeople.has(p.id));
+  students = selected.map((p, i) => ({
+    id: i + 1,
+    studentId: p.studentId,
+    name: p.name,
+    college: p.college,
+    amount: ''
+  }));
+
+  closePeopleManager();
+  document.getElementById('fileInfo').textContent = `✓ 已导入 ${students.length} 人`;
+  document.getElementById('fileInfo').classList.remove('hidden');
+  document.getElementById('tableContainer').classList.remove('hidden');
+
+  renderTable();
+  showToast(`已导入 ${students.length} 人`, 'success');
+}
+
+// 上传文件
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  // 保存文件名（不带扩展名）
+  uploadedFileName = file.name.replace(/\.[^/.]+$/, '');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  fetch('/api/roster/upload', {
+    method: 'POST',
+    body: formData
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.error) {
+      showToast(data.error, 'error');
+      return;
+    }
+    students = data.students.map((s, i) => ({
+      id: i + 1,
+      studentId: s.studentId || '',
+      name: s.name || '',
+      college: s.college || '国家网络安全学院',
+      amount: s.amount || ''
+    }));
+
+    document.getElementById('fileInfo').textContent =
+      `✓ 已导入 ${students.length} 位学生（${uploadedFileName}）`;
+    document.getElementById('fileInfo').classList.remove('hidden');
+    document.getElementById('tableContainer').classList.remove('hidden');
+
+    renderTable();
+    showToast(`成功导入 ${students.length} 位学生`, 'success');
+  })
+  .catch(err => {
+    showToast('上传失败: ' + err.message, 'error');
+  });
+});
+
+// 渲染表格
+function renderTable() {
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = students.map((s, i) => {
+    const collegeOptions = COLLEGES.map(c =>
+      `<option value="${c}" ${s.college === c ? 'selected' : ''}>${c}</option>`
+    ).join('');
+
+    return `
+    <tr>
+      <td>${i + 1}</td>
+      <td><input type="text" value="${s.studentId}"
+          onchange="updateStudent(${i}, 'studentId', this.value)"
+          placeholder="学号"></td>
+      <td><input type="text" value="${s.name}"
+          onchange="updateStudent(${i}, 'name', this.value)"
+          placeholder="姓名"></td>
+      <td><select onchange="updateStudent(${i}, 'college', this.value)">
+          ${collegeOptions}
+        </select></td>
+      <td><input type="number" value="${s.amount}"
+          onchange="updateAmount(${i}, this.value)"
+          placeholder="0" min="0" step="0.01"></td>
+      <td><button onclick="deletePerson(${i})"
+          style="padding: 4px 8px; background: #ff4d4f; color: white; border: none; border-radius: 3px; cursor: pointer;">
+          删除
+        </button></td>
+    </tr>
+  `;
+  }).join('');
+
+  updateSummary();
+}
+
+// 更新学生信息
+function updateStudent(index, field, value) {
+  students[index][field] = value;
+}
+
+// 更新金额
+function updateAmount(index, value) {
+  students[index].amount = value;
+  updateSummary();
+}
+
+// 更新统计
+function updateSummary() {
+  const total = students.reduce((sum, s) => sum + (parseFloat(s.amount) || 0), 0);
+  const count = students.filter(s => s.amount && parseFloat(s.amount) > 0).length;
+
+  document.getElementById('summary').innerHTML = `
+    <strong>统计：</strong>
+    共 ${students.length} 人，
+    已填写金额 ${count} 人，
+    合计 <strong>${total.toFixed(2)}</strong> 元
+  `;
+}
+
+// 导出文件
+function exportFiles() {
+  if (students.length === 0) {
+    showToast('请先上传Excel名单', 'error');
+    return;
+  }
+
+  const projectType = document.getElementById('projectType').value;
+  const period = document.getElementById('period').value.trim();
+  const unitName = document.getElementById('unitName').value.trim();
+  const projectCode = document.getElementById('projectCode').value.trim();
+  const projectName = document.getElementById('projectName').value.trim();
+  const note = document.getElementById('note').value.trim();
+
+  if (!period || !unitName || !projectCode || !projectName) {
+    showToast('请填写所有必填项（带 * 的）', 'error');
+    return;
+  }
+
+  const filledStudents = students.filter(s => s.amount && parseFloat(s.amount) > 0);
+  if (filledStudents.length === 0) {
+    showToast('请至少为一位学生设置金额', 'error');
+    return;
+  }
+
+  fetch('/api/export/simple', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectType,
+      period,
+      unitName,
+      projectCode,
+      projectName,
+      note,
+      students: filledStudents,
+      listName: uploadedFileName  // 传递上传的文件名
+    })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.error) {
+      showToast(data.error, 'error');
+      return;
+    }
+
+    showToast('正在下载文件...', 'success');
+
+    // 自动下载 Word
+    setTimeout(() => {
+      const a1 = document.createElement('a');
+      a1.href = '/api/export/download?file=' + encodeURIComponent(data.word_file) +
+                '&path=' + encodeURIComponent(data.word_path);
+      a1.download = data.word_file;
+      a1.click();
+    }, 100);
+
+    // 自动下载 Excel
+    setTimeout(() => {
+      const a2 = document.createElement('a');
+      a2.href = '/api/export/download?file=' + encodeURIComponent(data.excel_file) +
+                '&path=' + encodeURIComponent(data.excel_path);
+      a2.download = data.excel_file;
+      a2.click();
+    }, 500);
+
+    // 如果有 PDF 也下载
+    if (data.pdf_file) {
+      setTimeout(() => {
+        const a3 = document.createElement('a');
+        a3.href = '/api/export/download?file=' + encodeURIComponent(data.pdf_file) +
+                  '&path=' + encodeURIComponent(data.pdf_path);
+        a3.download = data.pdf_file;
+        a3.click();
+      }, 900);
+    }
+
+    document.getElementById('exportResult').innerHTML = `
+      <div style="padding: 15px; background: #f6ffed; border: 1px solid #b7eb8f; border-radius: 4px;">
+        <div style="margin-bottom: 10px;">✓ 导出成功！</div>
+        <div style="margin-bottom: 8px;">
+          <strong>📝 Word 明细表：</strong>${data.word_file}
+        </div>
+        ${data.pdf_file ? `<div style="margin-bottom: 8px;">
+          <strong>📄 PDF 明细表：</strong>${data.pdf_file}
+        </div>` : ''}
+        <div style="margin-bottom: 8px;">
+          <strong>📊 Excel 名单：</strong>${data.excel_file}
+        </div>
+        <div>人数：${data.count} 人，合计：${data.total} 元</div>
+        <div style="margin-top: 8px; font-size: 13px; color: #666;">
+          文件已自动下载到浏览器默认位置
+        </div>
+      </div>
+    `;
+
+    showToast('导出成功！Word、PDF 和 Excel 已生成', 'success');
+  })
+  .catch(err => {
+    showToast('导出失败: ' + err.message, 'error');
+  });
+}
+
+// 提示消息
+function showToast(message, type = 'success') {
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+</script>
+
 </body>
 </html>

@@ -10,8 +10,10 @@ import csv
 import io
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-VENDOR = os.path.join(HERE, "vendor", "pylib")
+# 本文件在 src/ 下，vendor/、templates/ 都在项目根（上一级）
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(SRC_DIR)
+VENDOR = os.path.join(ROOT, "vendor", "pylib")
 if VENDOR not in sys.path:
     sys.path.insert(0, VENDOR)
 
@@ -366,7 +368,7 @@ def write_submission_xls(students, out_path):
     """Three-column upload form; only checked people, same headers as the supplied XLS."""
     import xlrd
     import xlwt
-    template = os.path.join(HERE, "templates", "助研费用发放列表.xls")
+    template = os.path.join(ROOT, "templates", "助研费用发放列表.xls")
     source = xlrd.open_workbook(template)
     headers = source.sheet_by_index(0).row_values(0)
     if headers != ["学号", "姓名", "助研津贴(三兼费)"]:

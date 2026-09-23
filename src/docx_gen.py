@@ -14,8 +14,10 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.oxml.text.paragraph import CT_P
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DOCX = os.path.join(HERE, "templates", "武汉大学学生劳务费发放明细表（科研经费）.docx")
+# 本文件在 src/ 下，templates/ 在项目根（上一级）
+SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(SRC_DIR)
+DEFAULT_DOCX = os.path.join(ROOT, "templates", "武汉大学学生劳务费发放明细表（科研经费）.docx")
 
 # 表格行号（按模板固定；改了模板结构要同步这里）
 ROW_HEAD_1 = 0    # 发放单位 / 财务项目编号 / 兼职时段
@@ -453,7 +455,7 @@ def set_paragraph_align(para, value="center"):
 
 
 def set_cell_borders_single(tc, sz="4"):
-    """给单元格加全边框（用于“合计”行突出显示）。"""
+    """给单元格加全边框（用于"合计"行突出显示）。"""
     tcPr = tc.find(qn("w:tcPr"))
     if tcPr is None:
         tcPr = OxmlElement("w:tcPr")
@@ -558,33 +560,17 @@ def reason_template_preview(settings):
 def build_note(settings, students):
     """生成"发放事项说明"这一段。
 
-    不再写"xxx等N位"这种会过期的话：
-    - 说明里带 {人数}/{第一位学生} 等占位符：替换占位符
-    - 模板自带的样例说明、或留空：用不点名的固定说法
-    - 其它（用户自己写的）：原样保留
+    格式：本人项目组{第一位学生}等{人数}位本科生、研究生参与组内{发放事项说明}科研项目，负责相关研发工作。明细见下表：
     """
-    template = (settings.get("note") or "").strip()
     count = len(students)
     names = [s.get("name", "").strip() for s in students if s.get("name", "").strip()]
-    lead_name = names[0] if names else ""
+    lead_name = names[0] if names else "XXX"
 
-    if not template:
-        return _auto_note(settings)
+    # 获取用户填写的发放事项说明
+    note = (settings.get("note") or "").strip()
 
-    if any(token in template for token in ("{人数}", "{count}", "{第一位学生}",
-                                           "{姓名}", "{时段}", "{项目名称}")):
-        out = template
-        out = out.replace("{人数}", str(count)).replace("{count}", str(count))
-        out = out.replace("{第一位学生}", lead_name).replace("{姓名}", lead_name)
-        out = out.replace("{时段}", str(settings.get("period", "")))
-        out = out.replace("{项目名称}", str(settings.get("projectName", "")))
-        return out
-
-    # 模板自带的样例说明：里面的姓名和人数会过期，换成不点名的固定说法
-    if re.search(r"本人项目组.*?参与科研项目", template):
-        return _auto_note(settings)
-
-    return template
+    # 生成说明文本
+    return f"本人项目组{lead_name}等{count}位本科生、研究生参与组内{note}科研项目，负责相关研发工作。明细见下表："
 
 
 def _auto_note(settings):
@@ -801,13 +787,8 @@ def generate_docx(payload, out_path, template_path=None):
     set_cell_text(head2[1], settings.get("projectName", ""))
 
     # ---- 2. 发放事项说明 ------------------------------------------------
-    # 模板该段落自带字体（Times New Roman + 等线 + sz20），直接沿用
-    for row in rows[2:layout["header"]]:
-        note_cell = row.findall(qn("w:tc"))[0]
-        if "发放事项说明" in re.sub(r"\s+", "", cell_text(note_cell)):
-            note_paras = note_cell.findall(qn("w:p"))
-            if len(note_paras) >= 2:
-                replace_paragraph_text(note_paras[1], build_note(settings, students))
+    # 科研经费和非科研经费都不需要自动填充这个框
+    # 保持模板原样
 
     # ---- 3. 明细行 ------------------------------------------------------
     template_row = rows[first]
@@ -865,6 +846,7 @@ def generate_docx(payload, out_path, template_path=None):
                     student, settings, project_name=project_name)
                 values = [str(index + 1), student.get("name", ""), student.get("studentId", ""),
                           fmt_number(amount, blank_zero=True, thousands=True), reason]
+
             height = row.find("w:trPr/w:trHeight", namespaces=row.nsmap)
             if height is not None:
                 height.set(qn("w:hRule"), "atLeast")
@@ -880,7 +862,7 @@ def generate_docx(payload, out_path, template_path=None):
                     set_paragraph_align(para, "center")
 
     # ---- 4. 合计行 ------------------------------------------------------
-    # 模板的合计行第一个单元格是合并的“合 计”区（含字体），
+    # 模板的合计行第一个单元格是合并的"合 计"区（含字体），
     # 最后一个单元格是空的，字体要从第一个借。
     total_cells = total_row.findall(qn("w:tc"))
     set_cell_text(total_cells[0], "合           计")
@@ -892,13 +874,42 @@ def generate_docx(payload, out_path, template_path=None):
         set_paragraph_align(para, "center")
     for cell in total_cells:
         set_cell_borders_single(cell, "4")
-        set_cell_shading(cell, "F2F2F2")
+        # 不设置背景色
 
-    # Repeat the form's header on additional pages; keep the supplied approval text.
-    for row in rows[:layout["header"] + 1]:
-        props = row.get_or_add_trPr()
-        if props.find(qn("w:tblHeader")) is None:
-            props.append(OxmlElement("w:tblHeader"))
+    # ---- 5. 合计行下方的发放事由（仅非科研经费）--------------------------
+    # 非科研经费：发放事由写在表格倒数第二行（倒数第一行是"经确认..."）
+    if not layout["research"]:
+        # 从表格末尾倒着数，倒数第二行是发放事由区域
+        if len(rows) >= 2:
+            reason_row = rows[-2]  # 倒数第二行
+            reason_cells = reason_row.findall(qn("w:tc"))
+            if reason_cells:
+                # 在第一个单元格写入发放事由
+                reason_cell = reason_cells[0]
+                paras = reason_cell.findall(qn("w:p"))
+
+                # 生成发放事由文本：发放xxx、xxx等n人，参与组内科研项目。明细如上表。
+                if students:
+                    # 只显示第一个人的名字
+                    first_name = students[0].get("name", "")
+                    total_count = len(students)
+                    reason_text = f"发放{first_name}等{total_count}人，参与组内科研项目的科研补助。明细如上表。"
+                else:
+                    reason_text = ""
+
+                # 写入第一个段落，如果没有段落就创建一个
+                if paras:
+                    replace_paragraph_text(paras[0], reason_text)
+                else:
+                    new_para = OxmlElement("w:p")
+                    reason_cell.append(new_para)
+                    replace_paragraph_text(new_para, reason_text)
+
+    # Repeat only the column header row on additional pages, not the project info rows
+    header_row = rows[layout["header"]]
+    props = header_row.get_or_add_trPr()
+    if props.find(qn("w:tblHeader")) is None:
+        props.append(OxmlElement("w:tblHeader"))
 
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     doc.save(out_path)

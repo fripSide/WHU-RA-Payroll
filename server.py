@@ -8,16 +8,22 @@ import sys
 import json
 import shutil
 import socket
-import tempfile
 import threading
 import webbrowser
 import mimetypes
 import urllib.parse
+import math
+import uuid
+from decimal import Decimal, ROUND_HALF_UP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "vendor", "pylib"))
+# 依赖目录交给 bootstrap 排：它会摘掉"能 import 其实是空壳"的坏目录
+# （vendor/pylib 里残留的不可读同名目录会把真包挡住，报
+#  module 'xlwt' has no attribute 'Workbook'）。必须先于其它依赖执行。
+import bootstrap       # noqa: E402
+bootstrap.ensure_dependencies()
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -25,10 +31,26 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 import store            # noqa: E402
 import docx_gen         # noqa: E402
 import xls_gen          # noqa: E402
+import pdf_gen          # noqa: E402
+import people_store     # noqa: E402
 
 WEB_DIR = os.path.join(HERE, "web")
 OUTPUT_DIR = store.OUTPUT_DIR
 MAX_UPLOAD = 20 * 1024 * 1024
+EXPORT_LOCK = threading.Lock()
+
+
+def staging_dir(prefix):
+    """在输出目录下开一个临时暂存目录。
+
+    原先用 tempfile.mkdtemp()，它会把目录权限设成 0o700；在受限账户或
+    受管环境里这个 ACL 反而会让子进程写不进去。放在输出目录下既稳妥，
+    清理也可靠（同盘 os.replace 才是原子改名）。
+    """
+    store._ensure_dirs()
+    path = os.path.join(OUTPUT_DIR, "%s%s" % (prefix, uuid.uuid4().hex[:8]))
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def json_response(handler, data, status=200):
@@ -187,6 +209,12 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {"ok": True})
             if route == "/api/settings":
                 return json_response(self, store.load_settings())
+            if route == "/api/library":
+                state = store.load_settings()
+                return json_response(self, dict(state["library"], revision=state["revision"], apiVersion=1))
+            if route == "/api/library/backup":
+                store.load_settings()
+                return json_response(self, people_store.backup(store.DATABASE_PATH))
             if route == "/api/templates":
                 return json_response(self, {"templates": store.list_templates()})
             if route == "/api/export/download":
@@ -212,7 +240,15 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {"ok": True,
                                             "settings": store.save_settings(parse_json_body(self))})
             if route == "/api/settings/reset":
-                return json_response(self, {"ok": True, "workspace": store.reset_settings()})
+                return json_response(self, {"ok": True, "workspace": store.reset_settings(parse_json_body(self).get("revision"))})
+            actions = {"/api/people/save": "person.save", "/api/people/delete": "person.delete",
+                       "/api/people/bulk-save": "people.save", "/api/people/bulk-delete": "people.delete",
+                       "/api/groups/save": "group.save", "/api/groups/delete": "group.delete",
+                       "/api/groups/roster": "group.roster",
+                       "/api/library/import": "library.import"}
+            if route in actions:
+                state = store.library_action(actions[route], parse_json_body(self))
+                return json_response(self, {"ok": True, "workspace": state})
             if route == "/api/templates/save":
                 payload = parse_json_body(self)
                 info = store.save_template((payload.get("id") or "").strip(), payload)
@@ -241,6 +277,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         except json.JSONDecodeError as exc:
             return json_response(self, {"error": "请求数据不是合法 JSON：%s" % exc}, 400)
+        except people_store.ConflictError as exc:
+            return json_response(self, {"error": str(exc)}, 409)
+        except ValueError as exc:
+            return json_response(self, {"error": str(exc)}, 400)
         except FileNotFoundError as exc:
             return json_response(self, {"error": str(exc)}, 404)
         except Exception as exc:  # noqa: BLE001
@@ -255,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
         if not item:
             return json_response(self, {"error": "没有收到文件"}, 400)
         suffix = os.path.splitext(item["filename"])[1] or ".dat"
-        tmp_dir = tempfile.mkdtemp(prefix="roster-")
+        tmp_dir = staging_dir("roster-")
         tmp_path = os.path.join(tmp_dir, "upload" + suffix)
         with open(tmp_path, "wb") as fh:
             fh.write(item["content"])
@@ -290,18 +330,26 @@ class Handler(BaseHTTPRequestHandler):
                     if s.get("checked", True)]
         if not students:
             return json_response(self, {"error": "还没有勾选学生"}, 400)
+        keys = [s.get("id") or s.get("studentId") for s in students]
+        if not all(keys) or len(set(keys)) != len(keys):
+            raise ValueError("每位人员需要唯一 ID")
 
         # ---- 总额均摊：填一个总额，平均分给勾选的人 ----
         if field == "amount" and payload.get("total") not in (None, ""):
             total = docx_gen.to_money(payload.get("total"))
-            if total <= 0:
+            if not math.isfinite(total) or total <= 0:
                 return json_response(self, {"error": "总额要大于 0"}, 400)
-            unit = docx_gen.fmt_number(total / len(students))
-            mapping = {s.get("studentId"): unit for s in students}
+            cents = int((Decimal(str(total)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            base, remainder = divmod(cents, len(students))
+            total = cents / 100
+            unit = docx_gen.fmt_number(base / 100)
+            mapping = {key: docx_gen.fmt_number((base + (index < remainder)) / 100)
+                       for index, key in enumerate(keys)}
             items = docx_gen.batch_fill(students, "amount", mapping)
             return json_response(self, {
                 "ok": True, "field": field, "mode": "total",
                 "count": len(students), "unit": unit,
+                "remainderCount": remainder,
                 "total": docx_gen.fmt_number(total),
                 "keptCount": 0,
                 "filledAmount": docx_gen.fmt_number(total),
@@ -322,7 +370,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 number = float(text.replace(",", ""))
             except ValueError:
-                continue          # 非数值直接跳过，不打断整批
+                raise ValueError("批量填入中有非数字内容，请修正后重试")
+            if not math.isfinite(number) or number < 0:
+                raise ValueError("批量填入只接受有限的非负数")
             values.append(docx_gen.fmt_number(number))
 
         if not values:
@@ -334,7 +384,7 @@ class Handler(BaseHTTPRequestHandler):
 
         mapping = {}
         for student, value in zip(students, values):
-            mapping[student.get("studentId")] = value
+            mapping[student.get("id") or student.get("studentId")] = value
 
         items = docx_gen.batch_fill(students, field, mapping)
 
@@ -360,7 +410,7 @@ class Handler(BaseHTTPRequestHandler):
             return json_response(self, {"error": "没有收到文件"}, 400)
         if not item["filename"].lower().endswith(".docx"):
             return json_response(self, {"error": "请上传 .docx 文件"}, 400)
-        tmp_dir = tempfile.mkdtemp(prefix="docxtpl-")
+        tmp_dir = staging_dir("docxtpl-")
         tmp_path = os.path.join(tmp_dir, "t.docx")
         with open(tmp_path, "wb") as fh:
             fh.write(item["content"])
@@ -369,56 +419,82 @@ class Handler(BaseHTTPRequestHandler):
             from docx import Document
             probe = Document(tmp_path)
             table_count = len(probe.tables)
-            settings, students = _extract_from_docx(probe)
-            saved = store.ensure_docx_template(
-                tmp_path, item["filename"], fields.get("projectType"))
+            settings, students = docx_gen.extract_template(probe)
+            kind = store.normalize_project_type(fields.get("projectType"))
+            if settings["projectType"] != kind:
+                raise ValueError("上传底板的列结构与所选科研/非科研类型不一致")
+            saved = store.ensure_docx_template(tmp_path, item["filename"], kind)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         return json_response(self, {
             "ok": True,
             "file": os.path.basename(saved),
             "tables": table_count,
-            "projectType": store.normalize_project_type(fields.get("projectType")),
             "settings": settings,
             "students": students,
         })
 
     def _export(self):
+        with EXPORT_LOCK:
+            return self._export_files()
+
+    def _export_files(self):
         payload = parse_json_body(self)
         settings = payload.get("settings") or {}
         students = payload.get("students") or []
         kinds = payload.get("kinds") or ["docx", "xls"]
         label = store.safe_filename(payload.get("label") or "", "").strip("_")
-        project_type = store.normalize_project_type(settings.get("projectType"))
-        template_path = store.current_docx_template(project_type)
+        template_path = store.current_docx_template(settings.get("projectType"))
+        if not isinstance(kinds, list) or not kinds or set(kinds) - {"docx", "pdf", "xls", "submission"}:
+            raise ValueError("导出类型可选 docx、pdf、xls、submission")
+        picked = [s for s in students if s.get("checked", True)]
+        if not picked:
+            raise ValueError("请先勾选本次发放人员")
+        if any(not str(s.get("name") or "").strip() for s in picked):
+            raise ValueError("本次发放人员中有人未填写姓名")
+        students, reason_project = _attach_group_names(students, settings)
+        # 前端会把"事由里要写的项目名"直接传进来，以它为准
+        reason_project = str(payload.get("projectName") or "").strip() or reason_project
+        picked = [s for s in students if s.get("checked", True)]
+        if "submission" in kinds and any(not str(s.get("studentId") or "").strip() for s in picked):
+            raise ValueError("系统上传名单要求每位人员填写学号")
+        for s in picked:
+            for key in ("rate", "hours", "amount"):
+                value = s.get(key)
+                if value not in (None, ""):
+                    try:
+                        number = float(str(value).replace(",", ""))
+                    except (ValueError, TypeError):
+                        raise ValueError("标准、工时和金额必须是数字")
+                    if not math.isfinite(number) or number < 0:
+                        raise ValueError("标准、工时和金额必须为有限的非负数")
 
         results = {}
-        if "docx" in kinds:
-            out = store.next_output_path("docx", settings, label)
-            info = docx_gen.generate_docx(
-                {"settings": settings, "students": students,
-                 "projectType": project_type},
-                out, template_path=template_path)
-            store.save_settings({"settings": settings,
-                                 "batch": payload.get("batch") or {},
-                                 "feePresets": payload.get("feePresets"),
-                                 "periodPresets": payload.get("periodPresets"),
-                                 "students": students})
-            results["docx"] = {"file": os.path.basename(info["path"]),
-                               "path": info["path"],
-                               "students": info["students"],
-                               "total": info["total"]}
-        if "xls" in kinds:
-            roster = _collect_roster(students)
-            out = store.next_output_path("xls", settings, label)
-            info = xls_gen.write_roster_xls(roster, out)
-            results["xls"] = {"file": os.path.basename(info["path"]),
-                              "path": info["path"],
-                              "students": info["students"]}
-        if not results:
-            return json_response(self, {"error": "没有可导出的类型"}, 400)
-        return json_response(self, {"ok": True, "results": results,
-                                    "outputDir": OUTPUT_DIR})
+        staging = staging_dir("export-")
+        try:
+            generated = {}
+            out = os.path.join(staging, "detail.docx")
+            if "docx" in kinds or "pdf" in kinds:
+                info = docx_gen.generate_docx(
+                    {"settings": settings, "students": students, "projectName": reason_project},
+                    out, template_path=template_path)
+                if "docx" in kinds:
+                    generated["docx"] = info
+                if "pdf" in kinds:
+                    pdf = pdf_gen.generate_pdf(out, os.path.join(staging, "detail.pdf"))
+                    generated["pdf"] = dict(info, path=pdf["path"])
+            if "xls" in kinds:
+                generated["xls"] = xls_gen.write_roster_xls(_collect_roster(students), os.path.join(staging, "roster.xls"))
+            if "submission" in kinds:
+                generated["submission"] = xls_gen.write_submission_xls(_collect_roster(picked), os.path.join(staging, "submission.xls"))
+            for kind, info in generated.items():
+                ext = "xls" if kind == "submission" else kind
+                out = store.next_output_path(ext, settings, (label + "_系统上传") if kind == "submission" else label)
+                os.replace(info["path"], out)
+                results[kind] = dict(info, path=out, file=os.path.basename(out))
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        return json_response(self, {"ok": True, "results": results, "outputDir": OUTPUT_DIR})
 
     # ------------------------------------------------------------------ main
     def do_OPTIONS(self):
@@ -426,6 +502,36 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Allow", "GET, POST, OPTIONS")
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+
+def _attach_group_names(students, settings):
+    """给每个人补上身份组名，并按「事由用哪个项目组」定出统一的项目名称。
+
+    事由里的 {身份} 用身份组名；项目名优先用「事由项目组」选中的项目组，
+    没选就用发放信息里的项目名称。都不写就留成高亮的占位，等去 Word 里补。
+    """
+    try:
+        library = store.load_settings().get("library") or {}
+    except Exception:  # noqa: BLE001 - 读不到就按没有分组处理，不要因此导出失败
+        library = {}
+    names = {g["id"]: g.get("name", "") for g in library.get("groups", [])}
+    kinds = {g["id"]: g.get("kind", "identity") for g in library.get("groups", [])}
+
+    chosen = str(settings.get("reasonProjectGroup") or "").strip()
+    # "__off__" 是界面上「不写入项目名」的哨兵值，不是真的分组 ID
+    if chosen and chosen != "__off__" and kinds.get(chosen) == "project":
+        project_name = names.get(chosen, "")
+    else:
+        # 没选项目组就退回表头的「项目名称」（表头也空着才留成高亮的待填占位）
+        project_name = str(settings.get("projectName") or "").strip()
+
+    out = []
+    for student in students:
+        identity = student.get("identityId") or ""
+        # 前端已经带上 identityName 就用它，否则按身份组 ID 查
+        name = str(student.get("identityName") or "").strip() or names.get(identity, "")
+        out.append(dict(student, identityName=name))
+    return out, project_name
 
 
 def _collect_roster(students):
@@ -472,65 +578,43 @@ def _extract_from_docx(document):
     if not rows:
         return settings, students
 
-    def compact(text):
-        return "".join(str(text or "").split()).replace("\u3000", "")
-
-    head_cells = rows[0].findall(qn("w:tc"))
-    head = [text_of(tc) for tc in head_cells]
-    for i, label in enumerate(head):
-        key = compact(label)
-        if i + 1 >= len(head):
-            continue
-        if "发放单位" in key:
-            settings["unitName"] = head[i + 1]
-        elif "财务项目编号" in key or "项目编号" in key:
-            settings["projectCode"] = head[i + 1]
-        elif "兼职时段" in key or "发放月份" in key or "月份" in key:
-            settings["period"] = head[i + 1]
+    head = [text_of(tc) for tc in rows[0].findall(qn("w:tc"))]
+    if len(head) > 1:
+        settings["unitName"] = head[1]
+    if len(head) > 3:
+        settings["projectCode"] = head[3]
+    if len(head) > 5:
+        settings["period"] = head[5]
     if len(rows) > 1:
         second = [text_of(tc) for tc in rows[1].findall(qn("w:tc"))]
         if len(second) > 1:
             settings["projectName"] = second[1]
-    # 表头由“序号 + 姓名”识别，两个内置模板的列数和明细起始行不同。
-    header_index = None
-    labels = []
-    for i, row in enumerate(rows):
-        vals = [text_of(tc) for tc in row.findall(qn("w:tc"))]
-        compacted = [compact(v) for v in vals]
-        if any("序号" in v for v in compacted) and any("姓名" in v for v in compacted):
-            header_index, labels = i, compacted
-            break
-    if header_index is None:
-        return settings, students
-    cols = {}
-    for i, label in enumerate(labels):
-        if "姓名" in label: cols["name"] = i
-        elif "学号" in label: cols["studentId"] = i
-        elif "所在学院" in label or label == "学院": cols["college"] = i
-        elif "标准" in label or "单价" in label: cols["rate"] = i
-        elif "工时" in label or "时长" in label: cols["hours"] = i
-        elif "实发金额" in label or "助研津贴" in label or label == "金额": cols["amount"] = i
+    if len(rows) > 2:
+        note_cell = rows[2].findall(qn("w:tc"))[0]
+        paras = note_cell.findall(qn("w:p"))
+        target = paras[1] if len(paras) >= 2 else (paras[0] if paras else None)
+        if target is not None:
+            settings["note"] = "".join(
+                node.text or "" for node in target.iter(qn("w:t"))).strip()
 
-    for row in rows[header_index + 1:]:
+    for row in rows[5:]:
         cells = [text_of(tc) for tc in row.findall(qn("w:tc"))]
-        joined = compact("".join(cells))
+        joined = "".join(cells).replace(" ", "")
         if not joined:
             continue
         if "合计" in joined:
             break
-        if "name" not in cols or "studentId" not in cols:
+        if len(cells) < 7:
             continue
-        name = cells[cols["name"]] if cols["name"] < len(cells) else ""
-        sid = cells[cols["studentId"]] if cols["studentId"] < len(cells) else ""
-        if not name and not sid:
+        if not cells[1] and not cells[2]:
             continue
         students.append({
-            "studentId": sid,
-            "name": name,
-            "college": cells[cols["college"]] if cols.get("college", 999) < len(cells) else "",
-            "rate": cells[cols["rate"]] if cols.get("rate", 999) < len(cells) else "",
-            "hours": cells[cols["hours"]] if cols.get("hours", 999) < len(cells) else "",
-            "amount": cells[cols["amount"]] if cols.get("amount", 999) < len(cells) else "",
+            "studentId": cells[2],
+            "name": cells[1],
+            "college": cells[3],
+            "rate": cells[4],
+            "hours": cells[5],
+            "amount": cells[6],
             "checked": True,
         })
     return settings, students

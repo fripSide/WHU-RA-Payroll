@@ -2,3 +2,9 @@ __pycache__
 .DS_Store
 output
 vendor
+app/*.sqlite3*
+tmp/
+.pytest_cache/
+# 交付包（内含人员数据，绝不能进仓库）
+dist/
+自检输出/

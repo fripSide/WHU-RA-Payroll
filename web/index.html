@@ -49,12 +49,63 @@
        ================================================================= -->
   <section class="panel" data-panel="1">
     <div class="panel-head">
-      <h2>第 1 步 · 导入学生名单</h2>
-      <p>支持 <code>.xls</code> / <code>.xlsx</code> / <code>.csv</code>，也可以直接粘贴。已经有学生了就直接下一步。</p>
+      <h2>第 1 步 · 人员库与本次名单</h2>
+      <p>人员录入后长期保存，可以随时编辑、重新分组和发放。移出本次名单不会删除人员档案。</p>
     </div>
+
+    <div id="draftBanner" class="draft-banner" hidden>发现未保存的浏览器草稿。
+      <button id="btnRestoreDraft" class="btn btn-mini" type="button">恢复草稿到本次</button>
+      <button id="btnDismissDraft" class="btn btn-mini" type="button">丢弃草稿</button>
+    </div>
+    <section class="library" aria-label="长期人员库">
+      <div class="library-heading"><div><h3>长期人员库 <span id="libraryCount"></span></h3>
+        <p>先建立分组和人员，再将需要的人加入本次发放。</p></div>
+        <div class="library-actions">
+          <button id="btnNewPerson" class="btn btn-primary" type="button">+ 新增人员</button>
+          <button id="btnLibraryBackup" class="btn btn-ghost" type="button">备份人员库</button>
+          <button id="btnLibraryRestore" class="btn btn-ghost" type="button">导入备份</button>
+          <input id="fileLibraryRestore" type="file" accept=".json" hidden>
+        </div>
+      </div>
+      <div class="group-editor">
+        <select id="newGroupKind" aria-label="分组类型">
+          <option value="identity">身份组（一人只能有一个）</option>
+          <option value="project">项目组（可同时属于多个）</option>
+        </select>
+        <input id="newGroupName" type="text" maxlength="80" placeholder="新分组名称，如博士生 / 国家重点研发" aria-label="新分组名称">
+        <button id="btnNewGroup" class="btn btn-ghost" type="button">添加分组</button>
+        <span class="tip">身份组互斥，避免同一人重复发放；项目组可重叠</span>
+      </div>
+      <div class="group-section">
+        <div class="group-section-head"><span class="group-kind-label">身份组</span>
+          <span class="tip">每人只能属于一个；导入名单和批量勾选都按它来</span>
+          <button id="btnRenameIdentity" class="btn btn-mini" type="button" hidden>改名</button>
+          <button id="btnDeleteIdentity" class="btn btn-danger-ghost btn-mini" type="button" hidden>删除</button>
+        </div>
+        <div id="identityChips" class="group-chips" aria-label="身份分组"></div>
+      </div>
+      <div class="group-section">
+        <div class="group-section-head"><span class="group-kind-label">项目组</span>
+          <span class="tip">用来筛选和批量勾选，一个人可以在多个项目组里</span>
+          <button id="btnRenameProject" class="btn btn-mini" type="button" hidden>改名</button>
+          <button id="btnDeleteProject" class="btn btn-danger-ghost btn-mini" type="button" hidden>删除</button>
+        </div>
+        <div id="projectChips" class="group-chips" aria-label="项目分组"></div>
+      </div>
+      <div class="library-toolbar">
+        <input id="librarySearch" type="search" placeholder="搜索姓名、学号或学院" aria-label="搜索人员库">
+        <button id="btnAddGroupToBatch" class="btn btn-primary" type="button">将当前列表加入本次</button>
+      </div>
+      <div id="groupChips" class="group-chips" aria-label="人员分组" hidden></div>
+      <div class="library-table-wrap"><table class="library-table">
+        <thead><tr><th>姓名 / 学号</th><th>所在学院</th><th>身份组</th><th>项目组</th><th>操作</th></tr></thead>
+        <tbody id="libraryRows"></tbody>
+      </table><p id="libraryEmpty" class="tip">还没有人员，点击“新增人员”或在下面导入名单。</p></div>
+    </section>
 
     <!-- 兼职时段：导入前先定好，点一下就行 -->
     <div class="period-bar">
+      <label class="bar-label">项目类型 <select data-setting="projectType" aria-label="项目类型"><option value="research">科研经费</option><option value="non_research">非科研经费</option></select></label>
       <span class="bar-label">兼职时段</span>
       <div class="period-chips" id="periodChips"></div>
       <span class="period-custom">
@@ -64,6 +115,12 @@
       <button class="btn btn-mini" id="btnPeriodEdit" type="button">改预设…</button>
       <span class="bar-gap"></span>
       <span class="tip" id="periodHint"></span>
+    </div>
+
+    <div class="import-group-bar">
+      <span class="bar-label">导入到分组</span>
+      <select id="importGroup" aria-label="导入到哪个分组" data-setting="importGroup"></select>
+      <span class="tip">这份名单里的人会整批归入该组；已有其他身份组的人会先拦下来提示，不会重复发放</span>
     </div>
 
     <div class="import-grid">
@@ -79,8 +136,8 @@
       </button>
       <button class="tile" id="tileManual" type="button">
         <span class="tile-icon">✏️</span>
-        <strong>手动添加</strong>
-        <em>只加一两个人时用</em>
+        <strong>逐个录入人员</strong>
+        <em>保存到人员库，可连续录入、随时修改</em>
       </button>
     </div>
 
@@ -104,7 +161,7 @@
         <strong id="previewTitle">解析结果</strong>
         <label class="inline-check">
           <input type="checkbox" id="mergeToggle" checked>
-          同名 / 同学号只更新，其余追加
+           按学号合并；无学号时仅合并唯一同名人员
         </label>
       </div>
       <div class="preview-list" id="previewList"></div>
@@ -119,7 +176,7 @@
       <div class="imported-head">
         <strong>当前名单</strong>
         <span id="importedSummary"></span>
-        <button class="link" id="btnClearStudents" type="button">清空重来</button>
+        <button class="link" id="btnClearStudents" type="button">清空本次名单（保留人员库）</button>
       </div>
       <div class="chips" id="importedChips"></div>
     </div>
@@ -197,6 +254,13 @@
       </div>
     </details>
 
+    <div class="group-select-bar">
+      <span class="bar-label">按分组勾选</span>
+      <div id="groupSelectChips" class="group-chips"></div>
+      <span class="bar-gap"></span>
+      <span class="tip">点分组名可全选/全不选整组；点「设金额」只给这一组填</span>
+    </div>
+
     <div class="toolbar">
       <div class="seg">
         <button class="seg-btn" data-select="all" type="button">全选</button>
@@ -206,7 +270,7 @@
       <input type="search" id="search" class="search" placeholder="搜索姓名 / 学号 / 学院">
       <div class="spacer"></div>
       <button class="btn btn-ghost" id="btnAdd" type="button">+ 添加</button>
-      <button class="btn btn-ghost" id="btnDeleteUnchecked" type="button">删除未勾选</button>
+      <button class="btn btn-ghost" id="btnDeleteUnchecked" type="button">将未勾选人员移出本次</button>
     </div>
 
     <div class="table-wrap">
@@ -215,12 +279,14 @@
           <tr>
             <th class="col-check"><input type="checkbox" id="checkAll"></th>
             <th class="col-no">序号</th>
+            <th class="col-group">身份组</th>
             <th class="col-sid">学号</th>
             <th class="col-name">姓名</th>
             <th class="col-college">所在学院</th>
             <th class="col-rate">标准（元/时）</th>
             <th class="col-hours">工　时</th>
             <th class="col-amount">实发金额</th>
+            <th class="col-reason">发放事由及依据</th>
             <th class="col-act"></th>
           </tr>
         </thead>
@@ -254,12 +320,18 @@
       <button class="export-card" id="btnExportXls" type="button">
         <span class="tile-icon">📊</span>
         <strong>Excel 名单</strong>
-        <em>勾选学生的<br>学号 / 姓名 / 所在学院 / 标准 / 工时 / 助研津贴</em>
+        <em>本次名单全部人员，含未勾选人员<br>保留勾选状态，供下次导入</em>
       </button>
-      <button class="export-card is-primary" id="btnExportBoth" type="button">
+      <button class="export-card" id="btnExportPdf" type="button">
+        <span class="tile-icon">📑</span><strong>PDF 明细表</strong><em>按所选科研 / 非科研模板生成</em>
+      </button>
+      <button class="export-card is-primary" id="btnExportSubmit" type="button">
+        <span class="tile-icon">📤</span><strong>报销提交文件</strong><em>PDF 明细表 + 系统上传 Excel<br>Excel 仅含学号、姓名、助研津贴三列</em>
+      </button>
+      <button class="export-card" id="btnExportBoth" type="button">
         <span class="tile-icon">📦</span>
-        <strong>两个都要</strong>
-        <em>一次导出上面两份文件</em>
+        <strong>全部导出</strong>
+        <em>Word、PDF、维护名单、系统上传名单</em>
       </button>
     </div>
 
@@ -286,6 +358,7 @@
   <div class="drawer-body">
     <section class="fieldset">
       <h4>明细表表头</h4>
+      <label class="field"><span>项目类型</span><select data-setting="projectType"><option value="research">科研经费</option><option value="non_research">非科研经费</option></select></label>
       <label class="field"><span>发放单位</span>
         <input type="text" data-setting="unitName" placeholder="如：武汉数学与智能研究院"></label>
       <label class="field"><span>财务项目编号</span>
@@ -307,10 +380,38 @@
     <section class="fieldset">
       <h4>发放事项说明</h4>
       <label class="field">
-        <textarea data-setting="note" rows="6"
-          placeholder="留空则自动生成「本人项目组XX等N位本科生、研究生在{时段}参与科研项目…」"></textarea>
+        <textarea data-setting="note" rows="3"
+          placeholder="留空则自动生成「本人项目组本科生、研究生在{时段}参与科研项目…」"></textarea>
         <em class="tip">可用占位符：<code>{人数}</code> <code>{第一位学生}</code> <code>{时段}</code> <code>{项目名称}</code></em>
       </label>
+    </section>
+
+    <section class="fieldset">
+      <h4>每行「发放事由及依据」（科研表）</h4>
+      <label class="field"><span>事由模板</span>
+        <textarea data-setting="reasonTemplate" rows="3"
+          placeholder="{身份}{姓名}参与了【待填写项目名称】项目，完成了【待填写工作内容】工作。"></textarea>
+        <em class="tip">
+          可用占位符：<code>{身份}</code>（研究生 / 本科生…）<code>{姓名}</code> <code>{学号}</code> <code>{时段}</code><br>
+          用 <b>【】</b> 括起来 = <b>待填写</b>：导出时会去掉方括号，在 Word / PDF 里显示成<b>黄色高亮</b>，
+          提醒你补写；填了值就正常显示。
+        </em>
+      </label>
+      <label class="field"><span>工作内容</span>
+        <input type="text" data-setting="workContent" placeholder="留空则在文件里高亮显示「待填写工作内容」">
+        <em class="tip">填了就会写进每个人的事由；留空则留成高亮，导出后到 Word 里补。</em>
+      </label>
+      <label class="field"><span>事由里的项目名</span>
+        <select data-setting="reasonProjectGroup" id="reasonProjectGroup"></select>
+        <em class="tip">
+          选了项目组 → <b>项目名直接写进每个人的事由</b>（有项目组时默认就选上第一个，不用你动手）；<br>
+          选「不套用」→ 项目名留成<b>黄色高亮</b>，导出后到 Word / PDF 里补。
+        </em>
+      </label>
+      <div class="reason-preview">
+        <span class="tip">导出预览（以名单里第一个人为例）：</span>
+        <p id="reasonPreview" class="reason-sample"></p>
+      </div>
     </section>
 
     <section class="fieldset">
@@ -403,8 +504,39 @@
   </div>
 </div>
 
+<div class="modal" id="personModal" hidden>
+  <div class="modal-box person-box" role="dialog" aria-modal="true" aria-labelledby="personTitle">
+    <div class="modal-head"><h3 id="personTitle">新增人员</h3><button class="icon-btn" type="button" data-close>×</button></div>
+    <form id="personForm" class="person-form">
+      <div class="two-col">
+        <label class="field">姓名<input name="name" type="text" placeholder="必填" required></label>
+        <label class="field">学号<input name="studentId" type="text" placeholder="可稍后补充"></label>
+      </div>
+      <label class="field">所在学院<input name="college" type="text"></label>
+      <div class="two-col">
+        <label class="field">身份组（只能选一个）
+          <select name="identityId" id="personIdentity"></select>
+        </label>
+        <label class="field">项目组（可多选）
+          <span class="check-row" id="personProjects"></span>
+        </label>
+      </div>
+      <div class="two-col">
+        <label class="field">标准（元/时）<input name="rate" type="number" min="0" step="0.01"></label>
+        <label class="field">工时<input name="hours" type="number" min="0" step="0.01"></label>
+      </div>
+      <label class="field">实发金额<input name="amount" type="number" min="0" step="0.01" placeholder="留空按标准 × 工时计算"></label>
+      <label class="field">发放事由及依据（科研表）<textarea name="reason" rows="2" placeholder="留空使用发放信息中的说明"></textarea></label>
+      <label class="inline-check"><input name="addToBatch" type="checkbox" checked>同时加入本次发放</label>
+      <p class="form-error" id="personError" role="alert"></p>
+      <div class="library-actions"><button class="btn btn-primary" type="submit">保存人员</button>
+        <button class="btn btn-ghost" id="btnSaveAndNext" type="button">保存并继续添加</button></div>
+    </form>
+  </div>
+</div>
 <div class="toast-wrap" id="toastWrap"></div>
 
+<script src="library.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

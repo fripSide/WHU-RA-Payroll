@@ -10,12 +10,15 @@ import re
 import json
 import shutil
 import datetime
+import tempfile
+import people_store
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_DIR = os.path.join(HERE, "templates")
-APP_DIR = os.path.join(HERE, "app")
-OUTPUT_DIR = os.path.join(HERE, "output")
+APP_DIR = os.path.abspath(os.environ.get("BAOXIAO_DATA_DIR") or os.path.join(HERE, "app"))
+OUTPUT_DIR = os.path.abspath(os.environ.get("BAOXIAO_OUTPUT_DIR") or os.path.join(HERE, "output"))
 SETTINGS_PATH = os.path.join(APP_DIR, "settings.json")
+DATABASE_PATH = os.path.join(APP_DIR, "people.sqlite3")
 DEFAULTS_PATH = os.path.join(TEMPLATE_DIR, "defaults.json")
 
 # 内置的两类 Word 明细表。项目类型保存在工作台设置中，导出时按类型选取。
@@ -33,6 +36,11 @@ DEFAULT_SETTINGS = {
     "projectName": "",
     "note": "",
     "projectType": "research",
+    # 每行的「发放事由及依据」模板：{身份} 换成身份组名，【…】 是待填写（导出时高亮）
+    # 留空时由 docx_gen.DEFAULT_REASON_TEMPLATE 兜底，两边保持一致
+    "reasonTemplate": "",
+    "workContent": "",
+    "reasonProjectGroup": "",
 }
 
 DEFAULT_BATCH = {"rate": "100", "hours": "10", "college": ""}
@@ -153,10 +161,14 @@ def read_json(path, fallback=None):
 
 def write_json(path, data):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2, allow_nan=False)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 def safe_filename(name, fallback="未命名"):
@@ -235,7 +247,7 @@ def list_templates():
     for name in sorted(os.listdir(TEMPLATE_DIR)):
         if not name.lower().endswith(".json"):
             continue
-        if name in ("defaults.json", "builtin.json"):
+        if name in ("defaults.json", "builtin.json", "docx_base.json"):
             continue
         data = read_json(os.path.join(TEMPLATE_DIR, name), None)
         if not isinstance(data, dict):
@@ -302,14 +314,13 @@ def delete_template(template_id):
 
 
 # -------------------------------------------------------------- 工作台状态
-def load_settings():
+def _legacy_settings():
     _ensure_dirs()
     data = read_json(SETTINGS_PATH, None)
     if not isinstance(data, dict):
         seed = load_builtin_defaults()
         seed["step"] = 0          # 首次打开：按有没有名单自动决定停在第几步
         seed["savedAt"] = datetime.datetime.now().isoformat(timespec="seconds")
-        write_json(SETTINGS_PATH, seed)
         return seed
 
     try:
@@ -341,6 +352,13 @@ def load_settings():
     return out
 
 
+def load_settings():
+    people_store.initialize(DATABASE_PATH, _legacy_settings())
+    out = people_store.load(DATABASE_PATH)
+    out["periodStart"] = DEFAULT_PERIOD_START
+    return out
+
+
 def save_settings(payload):
     _ensure_dirs()
     try:
@@ -358,14 +376,18 @@ def save_settings(payload):
     }
     record["settings"]["projectType"] = normalize_project_type(
         record["settings"].get("projectType"))
-    write_json(SETTINGS_PATH, record)
-    return record
+    return library_action("workspace", {"revision": payload.get("revision"), "workspace": record})
 
 
-def reset_settings():
-    if os.path.isfile(SETTINGS_PATH):
-        os.remove(SETTINGS_PATH)
-    return load_settings()
+def library_action(action, payload):
+    load_settings()
+    return people_store.mutate(DATABASE_PATH, action, payload)
+
+
+def reset_settings(revision):
+    record = load_builtin_defaults()
+    record.update(students=[], step=1, revision=revision)
+    return save_settings(record)
 
 
 # ------------------------------------------------------------------ 输出目录
@@ -377,7 +399,7 @@ def next_output_path(kind, settings=None, label=""):
     stamp = datetime.datetime.now().strftime("%Y%m%d")
     parts = [p for p in (period, label, stamp) if p]
     base = "_".join(parts) or ("导出_" + stamp)
-    if kind == "docx":
+    if kind in ("docx", "pdf"):
         base += "_劳务费发放明细表"
     else:
         base += "_助研津贴名单"

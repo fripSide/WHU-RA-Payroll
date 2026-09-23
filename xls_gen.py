@@ -320,6 +320,13 @@ def write_roster_xls(students, out_path, sheet_name="Sheet1"):
     center_style.alignment.vert = xlwt.Alignment.VERT_CENTER
     center_style.alignment.horz = xlwt.Alignment.HORZ_CENTER
 
+    # 金额列带千分位，和页面上看到的一致；单元格里仍是数字，导回来不影响计算
+    money_style = xlwt.XFStyle()
+    money_style.font = body_font
+    money_style.alignment = xlwt.Alignment()
+    money_style.alignment.vert = xlwt.Alignment.VERT_CENTER
+    money_style.num_format_str = "#,##0.##"
+
     headers = ["勾选", "学号", "姓名", "所在学院", "标准（元/时）", "工时",
                "助研津贴(三兼费)"]
     for col, title in enumerate(headers):
@@ -344,7 +351,7 @@ def write_roster_xls(students, out_path, sheet_name="Sheet1"):
         amount = student.get("amount")
         if amount in (None, ""):
             amount = _to_number(student.get("rate")) * _to_number(student.get("hours"))
-        sheet.write(row, 6, _to_number(amount), body_style)
+        sheet.write(row, 6, _to_number(amount), money_style)
 
     for col, width in enumerate((8, 18, 12, 24, 13, 10, 22)):
         sheet.col(col).width = 256 * width
@@ -353,6 +360,29 @@ def write_roster_xls(students, out_path, sheet_name="Sheet1"):
     book.save(out_path)
     return {"path": out_path, "students": len(ordered),
             "checked": sum(1 for s in ordered if s.get("checked", True))}
+
+
+def write_submission_xls(students, out_path):
+    """Three-column upload form; only checked people, same headers as the supplied XLS."""
+    import xlrd
+    import xlwt
+    template = os.path.join(HERE, "templates", "助研费用发放列表.xls")
+    source = xlrd.open_workbook(template)
+    headers = source.sheet_by_index(0).row_values(0)
+    if headers != ["学号", "姓名", "助研津贴(三兼费)"]:
+        raise ValueError("系统上传 Excel 模板须为学号、姓名、助研津贴三列")
+    book = xlwt.Workbook(encoding="utf-8")
+    sheet = book.add_sheet(source.sheet_names()[0])
+    for col, value in enumerate(headers):
+        sheet.write(0, col, value)
+        sheet.col(col).width = 256 * (22 if col != 1 else 16)
+    ordered = sorted([s for s in students if s.get("checked", True)], key=sort_key_by_id)
+    for index, person in enumerate(ordered, 1):
+        sheet.write(index, 0, str(person.get("studentId") or ""))
+        sheet.write(index, 1, str(person.get("name") or ""))
+        sheet.write(index, 2, _to_number(person.get("amount")))
+    book.save(out_path)
+    return {"path": out_path, "students": len(ordered)}
 
 
 def _to_number(value):

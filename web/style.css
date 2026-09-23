@@ -585,3 +585,66 @@ input:focus, select:focus, textarea:focus {
   .page { padding: 12px 14px 40px; }
   .table-wrap { max-height: none; }
 }
+
+/* Persistent people library */
+.library { margin: 18px 20px; padding: 20px; background: #f8faff; border: 1px solid #dce6f5; border-radius: 10px; }
+.library-heading, .library-toolbar, .library-actions, .group-editor { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.library-heading { justify-content: space-between; margin-bottom: 16px; }
+.library-heading h3 { margin: 0; font-size: 16px; }
+.library-heading h3 span { margin-left: 10px; color: var(--ink-2); font-size: 12px; font-weight: normal; }
+.library-heading p { margin: 5px 0 0; color: var(--ink-2); }
+.library input, .period-bar select { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: white; }
+.group-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.group-chip { border: 1px solid var(--line); padding: 6px 12px; border-radius: 20px; background: white; cursor: pointer; }
+.group-chip span { margin-left: 5px; opacity: .65; }
+.group-chip.is-active { color: white; background: var(--brand); border-color: var(--brand); }
+.library-toolbar { margin-bottom: 12px; }
+.library-table-wrap { overflow-x: auto; max-height: 380px; overflow-y: auto; }
+.library-table { width: 100%; border-collapse: collapse; text-align: left; }
+.library-table th, .library-table td { padding: 10px; border-bottom: 1px solid var(--line); }
+.library-table th { background: #edf2fb; position: sticky; top: 0; }
+.library-table td small { display: block; color: var(--ink-2); }
+.library-table td.library-actions { display: table-cell; white-space: nowrap; }
+.library-table td.library-actions button { margin: 2px; }
+.group-tag { display: inline-block; background: #e2edf9; color: #345578; border-radius: 4px; padding: 2px 7px; margin: 2px; font-size: 12px; }
+.person-box { max-width: 620px; }
+.person-form { padding: 20px; }
+.person-form .field { margin-bottom: 12px; }
+.person-groups { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; padding: 10px; }
+#personGroups { display: flex; gap: 12px; flex-wrap: wrap; }
+.form-error { color: var(--danger); min-height: 20px; }
+.draft-banner { margin: 15px 20px; padding: 12px; border: 1px solid #e9c35e; background: #fff7df; }
+.grid .col-reason { width: 190px; min-width: 190px; }
+body.project-nonresearch .col-reason { display: none; }
+body:not(.project-nonresearch) .grid { min-width: 1150px; }
+.export-cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+@media (max-width: 700px) { .library { padding: 12px; margin: 12px; } .library-table { min-width: 640px; } .library-toolbar input { width: 100%; } }
+
+/* 分组：身份组（互斥）+ 项目组（可重叠） */
+.group-section { margin: 12px 0; }
+.group-section-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.group-kind-label { font-weight: 600; font-size: 13px; color: var(--ink); }
+.group-tag.project { background: #eaf3e8; color: #3d6b33; }
+.group-editor select { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: white; }
+.check-row { display: flex; flex-wrap: wrap; gap: 10px; padding: 6px 0; }
+.group-select-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0 10px; }
+.group-select-bar .group-chip { font-size: 13px; }
+.group-chip.is-part { border-color: var(--brand); background: #eef5ff; color: var(--brand); }
+.import-group-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+.import-group-bar select { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: white; min-width: 230px; }
+.group-row .group-cell { background: #eef3fb; border-top: 2px solid #d6e2f2; text-align: left; padding: 6px 10px; }
+.group-row .group-name { font-weight: 600; margin: 0 6px; }
+.group-row .group-count { color: var(--ink-2); font-size: 12px; }
+.group-row-actions { margin-left: 12px; }
+.group-row-actions button { margin-right: 4px; }
+.col-group { width: 104px; min-width: 104px; }
+select.group-pick { width: 100%; border: 1px solid transparent; background: transparent; padding: 5px 4px; border-radius: 4px; font: inherit; color: inherit; }
+select.group-pick:hover, select.group-pick:focus { border-color: var(--line); background: white; }
+select.group-pick.is-orphan { color: var(--danger); }
+tr.is-clash td { background: #fdeceb; }
+.clash { color: var(--danger); font-size: 12px; }
+
+/* 事由模板预览：待填写部分显示成高亮，和导出文件里一致 */
+.reason-preview { margin-top: 10px; }
+.reason-sample { margin: 6px 0 0; padding: 8px 10px; background: #f7f9fc; border: 1px solid var(--line); border-radius: 6px; line-height: 1.7; }
+mark.todo { background: #ffff00; color: inherit; padding: 0 1px; }
